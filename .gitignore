@@ -1,0 +1,7 @@
+database.sqlite
+error.log
+uploads/*
+!uploads/.gitkeep
+output/*
+!output/.gitkeep
+builds/*

@@ -1,0 +1,39 @@
+# SSH Setup Commands for Google Cloud VM
+# IP: 34.27.233.78
+
+## 1. Connect to VM via SSH
+ssh username@34.27.233.78
+
+## 2. Navigate to project directory
+cd /var/www/html
+
+## 3. Backup current config (optional)
+sudo cp config.php config.php.backup
+
+## 4. Update config.php with correct settings
+sudo sed -i "s/define('ENABLE_GITHUB_BUILD', false);/define('ENABLE_GITHUB_BUILD', true);/" config.php
+
+sudo sed -i "s/define('GITHUB_TOKEN', '.*');/define('GITHUB_TOKEN', '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');/" config.php
+
+sudo sed -i "s/define('GITHUB_OWNER', '.*');/define('GITHUB_OWNER', 'abigail24223');/" config.php
+
+## 5. Verify changes
+cat config.php | grep -A3 "GITHUB ACTIONS BUILD"
+
+## 6. Check folder permissions
+ls -la output/ uploads/
+sudo chmod 777 output/ uploads/
+
+## 7. Test if everything is working
+php -r "include 'config.php'; echo 'GitHub: ' . GITHUB_OWNER . PHP_EOL;"
+
+## 8. Restart Apache (if needed)
+sudo systemctl restart apache2
+
+## 9. Check Apache status
+sudo systemctl status apache2
+
+## 10. Test website
+curl http://34.27.233.78/
+
+# Done! Now visit: http://34.27.233.78/

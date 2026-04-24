@@ -1,0 +1,18 @@
+User-agent: *
+Allow: /
+Disallow: /admin.php
+Disallow: /config.php
+Disallow: /generate.php
+Disallow: /api.php
+Disallow: /build_server.php
+Disallow: /github_builder.php
+Disallow: /debug_test.php
+Disallow: /diagnostic.php
+Disallow: /test_generate.php
+Disallow: /uploads/
+Disallow: /output/
+Disallow: /builds/
+Disallow: /template/
+Disallow: /error.log
+
+Sitemap: https://webtooapk.com/sitemap.xml

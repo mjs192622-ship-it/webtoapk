@@ -34,8 +34,9 @@ Options -Indexes
 RewriteCond %{HTTP_HOST} ^www\.webtooapk\.com [NC]
 RewriteRule ^(.*)$ https://webtooapk.com/$1 [L,R=301]
 
-# Force HTTPS
-RewriteCond %{HTTPS} !=on
+# Force HTTPS (Render terminates SSL at CDN - check X-Forwarded-Proto, not %{HTTPS})
+RewriteCond %{HTTP:X-Forwarded-Proto} !https [NC]
+RewriteCond %{HTTP:X-Forwarded-Proto} .+ [NC]
 RewriteCond %{HTTP_HOST} webtooapk\.com [NC]
 RewriteRule ^(.*)$ https://webtooapk.com/$1 [L,R=301]
 

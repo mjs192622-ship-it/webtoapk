@@ -14,7 +14,7 @@ define('OUTPUT_DIR', __DIR__ . '/output/');
 define('TEMPLATE_DIR', __DIR__ . '/template/');
 define('BUILD_DIR', __DIR__ . '/builds/');
 
-// Business model flag: keep generation free with no credit/wallet enforcement.
+// All users get free unlimited access - no credit or payment system
 define('FREE_MODE', true);
 
 /**

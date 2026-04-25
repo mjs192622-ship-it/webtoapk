@@ -1,0 +1,11 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "push-to-github",
+			"type": "shell",
+			"command": "git remote set-url origin git@github.com:mjs192622-ship-it/webtoapk.git; $env:GIT_SSH_COMMAND='ssh -o StrictHostKeyChecking=accept-new'; git push -u origin main",
+			"isBackground": false
+		}
+	]
+}

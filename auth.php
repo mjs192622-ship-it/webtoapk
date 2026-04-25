@@ -297,17 +297,11 @@ function getInitials($name) {
     return $initials ?: '?';
 }
 
-/**
- * Normalize user state when free mode is enabled.
- */
 function normalizeUserForFreeMode($user) {
-    if (!$user) {
-        return null;
-    }
-
+    if (!$user) { return null; }
     if (defined('FREE_MODE') && FREE_MODE) {
         $user['plan'] = 'free';
     }
-
     return $user;
 }
+

@@ -10,11 +10,13 @@ RUN apt-get update && apt-get install -y \
     libfreetype6-dev \
     libonig-dev \
     libxml2-dev \
+    libsqlite3-dev \
     curl \
     git \
     && docker-php-ext-install \
         pdo \
         pdo_mysql \
+        pdo_sqlite \
         mbstring \
         zip \
         gd \
@@ -22,29 +24,30 @@ RUN apt-get update && apt-get install -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Enable SQLite PDO (built-in, just needs enabling)
-RUN docker-php-ext-install pdo
-
 # Enable Apache modules
 RUN a2enmod rewrite headers expires deflate
 
 # Set working directory
 WORKDIR /var/www/html
 
-# Copy application files
+# Copy application files (excluding local SQLite WAL/SHM files)
 COPY . /var/www/html/
+
+# Remove Windows SQLite WAL/SHM files that can corrupt the DB on Linux
+RUN rm -f /var/www/html/database.sqlite-shm /var/www/html/database.sqlite-wal
 
 # Create required writable directories with proper permissions
 RUN mkdir -p /var/www/html/uploads \
              /var/www/html/output \
              /var/www/html/builds \
              /var/www/html/template \
+    && touch /var/www/html/database.sqlite \
     && chown -R www-data:www-data /var/www/html \
     && chmod -R 755 /var/www/html \
     && chmod -R 777 /var/www/html/uploads \
     && chmod -R 777 /var/www/html/output \
     && chmod -R 777 /var/www/html/builds \
-    && chmod 666 /var/www/html/database.sqlite 2>/dev/null || true
+    && chmod 666 /var/www/html/database.sqlite
 
 # Configure Apache virtual host
 RUN echo '<VirtualHost *:80>\n\

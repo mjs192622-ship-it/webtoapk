@@ -28,27 +28,22 @@ define('FREE_MODE', true);
  * 
  * See build_server.php for installation instructions
  */
-// Set to TRUE after running: sudo bash /var/www/html/setup_build_server.sh
-define('ENABLE_APK_BUILD', true);
+// Local build server - disabled (no Android SDK on Render)
+define('ENABLE_APK_BUILD', false);
 
-// Android SDK paths (needed for local APK builds)
+// Android SDK paths (not used)
 define('ANDROID_SDK_PATH', '/opt/android-build/android-sdk');
 define('JAVA_HOME', '/usr/lib/jvm/java-17-openjdk-amd64');
 define('GRADLE_HOME', '/opt/android-build/gradle/gradle-8.11.1');
 
 /**
- * GITHUB ACTIONS BUILD (FALLBACK)
+ * GITHUB ACTIONS BUILD
  * ========================================
- * 
- * Uses GitHub Actions as a fallback build server
- * Only used if ENABLE_APK_BUILD is false
- * 
- * Get token: https://github.com/settings/tokens
+ * Set GITHUB_TOKEN and GITHUB_OWNER in Render environment variables
  */
-// GitHub build - active until local build server is set up
-define('ENABLE_GITHUB_BUILD', false);
-define('GITHUB_TOKEN', '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');
-define('GITHUB_OWNER', 'abigail24223');
+define('ENABLE_GITHUB_BUILD', true);
+define('GITHUB_TOKEN', getenv('GITHUB_TOKEN') ?: '');
+define('GITHUB_OWNER', getenv('GITHUB_OWNER') ?: 'mjs192622-ship-it');
 
 // Create directories if they don't exist
 $dirs = [UPLOAD_DIR, OUTPUT_DIR, TEMPLATE_DIR, BUILD_DIR];

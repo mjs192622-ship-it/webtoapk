@@ -60,6 +60,16 @@ class GitHubAPKBuilder {
         $yaml .= "    steps:\n";
         $yaml .= "    - name: Checkout code\n";
         $yaml .= "      uses: actions/checkout@v4\n\n";
+        $yaml .= "    - name: Generate placeholder launcher icons if missing\n";
+        $yaml .= "      run: |\n";
+        $yaml .= "        for dir in app/src/main/res/mipmap-mdpi app/src/main/res/mipmap-hdpi app/src/main/res/mipmap-xhdpi app/src/main/res/mipmap-xxhdpi app/src/main/res/mipmap-xxxhdpi; do\n";
+        $yaml .= "          mkdir -p \$dir\n";
+        $yaml .= "          if [ ! -f \"\$dir/ic_launcher.png\" ]; then\n";
+        $yaml .= "            convert -size 192x192 xc:#6366f1 -fill white -font DejaVu-Sans -pointsize 80 -gravity center -annotate 0 'W' \"\$dir/ic_launcher.png\" 2>/dev/null || \\\n";
+        $yaml .= "            python3 -c \"import struct,zlib; data=struct.pack('>IHHI',1,192,192,0); open('\$dir/ic_launcher.png','wb').write(b'\\x89PNG\\r\\n\\x1a\\n'+struct.pack('>I',13)+b'IHDR'+struct.pack('>IIBBBBB',192,192,8,2,0,0,0)+struct.pack('>I',zlib.crc32(b'IHDR'+struct.pack('>IIBBBBB',192,192,8,2,0,0,0))&0xffffffff)+b'\\x00'*100)\"\n";
+        $yaml .= "            cp \"\$dir/ic_launcher.png\" \"\$dir/ic_launcher_round.png\" 2>/dev/null || true\n";
+        $yaml .= "          fi\n";
+        $yaml .= "        done\n\n";
         $yaml .= "    - name: Set up JDK 17\n";
         $yaml .= "      uses: actions/setup-java@v4\n";
         $yaml .= "      with:\n";
@@ -138,6 +148,10 @@ class GitHubAPKBuilder {
             $ext = strtolower(pathinfo($relativePath, PATHINFO_EXTENSION));
             if (in_array($ext, ['apk', 'aab', 'zip', 'sqlite', 'sqlite-shm', 'sqlite-wal'])) continue;
             if (@filesize($absolutePath) > 1000000) continue; // skip >1MB
+
+            // Skip mipmap PNG files — each needs a separate blob API call (10+ files × 2s = 20s timeout)
+            // Adaptive icons (mipmap-anydpi-v26/*.xml) are text files and will be included
+            if ($ext === 'png' && strpos($relativePath, 'mipmap-') !== false) continue;
 
             $fileContent = file_get_contents($absolutePath);
             if ($fileContent === false) continue;

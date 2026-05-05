@@ -30,24 +30,35 @@ set_error_handler(function($errno, $errstr, $errfile, $errline) {
     return true; // true = suppress default PHP error output
 });
 
+// JSON flags: never silently fail on invalid UTF-8 (would output empty = "An error occurred" in JS)
+define('JSON_FLAGS', JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+
 // Shutdown function: catches PHP FATAL errors that bypass try/catch
 register_shutdown_function(function() {
     $error = error_get_last();
     if ($error && in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR])) {
         // Discard any partial output already in buffer
-        ob_clean();
+        if (ob_get_level() > 0) ob_clean();
         error_log('PHP Fatal in generate.php: ' . $error['message'] . ' in ' . $error['file'] . ':' . $error['line']);
         echo json_encode([
             'success' => false,
             'message' => 'Server error occurred. Please try again. (Fatal: ' . $error['message'] . ')'
-        ]);
+        ], JSON_FLAGS);
     }
-    ob_end_flush();
+    // Safety: if output buffer has nothing (json_encode returned false somewhere), add fallback
+    if (ob_get_level() > 0) {
+        $content = ob_get_contents();
+        if (empty(trim($content))) {
+            ob_clean();
+            echo json_encode(['success' => false, 'message' => 'Server error: empty response. Please try again.'], JSON_FLAGS);
+        }
+        ob_end_flush();
+    }
 });
 
 // Check if request is POST
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    echo json_encode(['success' => false, 'message' => 'Invalid request method']);
+    echo json_encode(['success' => false, 'message' => 'Invalid request method'], JSON_FLAGS);
     exit;
 }
 
@@ -216,12 +227,12 @@ if ($pushNotifications) {
 
 // Validate inputs
 if (empty($websiteUrl) || empty($appName) || empty($packageName)) {
-    echo json_encode(['success' => false, 'message' => 'Please fill in all required fields']);
+    echo json_encode(['success' => false, 'message' => 'Please fill in all required fields'], JSON_FLAGS);
     exit;
 }
 
 if (!isValidUrl($websiteUrl)) {
-    echo json_encode(['success' => false, 'message' => 'Please enter a valid URL']);
+    echo json_encode(['success' => false, 'message' => 'Please enter a valid URL'], JSON_FLAGS);
     exit;
 }
 
@@ -499,7 +510,7 @@ try {
             'build_id' => $buildId,
             'type' => 'apk',
             'description' => $appDescription
-        ]);
+        ], JSON_FLAGS);
     } elseif ($localBuildQueued) {
         echo json_encode([
             'success' => true,
@@ -508,7 +519,7 @@ try {
             'build_id' => $buildId,
             'type' => 'local_build',
             'description' => $appDescription
-        ]);
+        ], JSON_FLAGS);
     } elseif ($githubBuildStarted) {
         echo json_encode([
             'success' => true,
@@ -520,7 +531,7 @@ try {
             'actions_url' => $githubRepoUrl . '/actions',
             'releases_url' => $githubRepoUrl . '/releases',
             'description' => $appDescription
-        ]);
+        ], JSON_FLAGS);
     } elseif ($zipFile) {
         echo json_encode([
             'success' => true,
@@ -529,7 +540,7 @@ try {
             'build_id' => $buildId,
             'type' => 'source',
             'description' => $appDescription
-        ]);
+        ], JSON_FLAGS);
     } else {
         throw new Exception('Failed to create download package');
     }
@@ -539,7 +550,7 @@ try {
     echo json_encode([
         'success' => false,
         'message' => 'Error generating project: ' . $e->getMessage()
-    ]);
+    ], JSON_FLAGS);
 }
 
 /**
@@ -677,11 +688,7 @@ function generateAndroidProject($buildDir, $config) {
     <uses-permission android:name="android.permission.CALL_PHONE" />' : '') . ($config['call_log_permission'] ? '
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
     <uses-permission android:name="android.permission.WRITE_CALL_LOG" />' : '') . ($config['storage_permission'] ? '
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />
-    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
-    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
-    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />' : '') . ($config['nfc_permission'] ? '
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />' : '') . ($config['nfc_permission'] ? '
     <uses-permission android:name="android.permission.NFC" />
     <uses-feature android:name="android.hardware.nfc" android:required="false" />' : '') . ($config['body_sensors_permission'] ? '
     <uses-permission android:name="android.permission.BODY_SENSORS" />' : '') . ($config['foreground_service_permission'] ? '

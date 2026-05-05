@@ -137,14 +137,22 @@ class GitHubAPKBuilder {
         $this->repo = $repoName;
 
         // Step 1: Get HEAD ref SHA (auto_init created an initial commit on main)
-        $headRef = $this->apiRequest(
-            "https://api.github.com/repos/{$this->owner}/{$repoName}/git/ref/heads/main",
-            'GET'
-        );
-        if (!isset($headRef['object']['sha'])) {
-            return ['success' => false, 'output' => 'Could not get HEAD ref: ' . json_encode($headRef)];
+        // Retry up to 3 times — GitHub occasionally needs a moment after creation
+        $parentSha = null;
+        for ($attempt = 0; $attempt < 3; $attempt++) {
+            if ($attempt > 0) usleep(600000); // 0.6s between retries
+            $headRef = $this->apiRequest(
+                "https://api.github.com/repos/{$this->owner}/{$repoName}/git/ref/heads/main",
+                'GET'
+            );
+            if (isset($headRef['object']['sha'])) {
+                $parentSha = $headRef['object']['sha'];
+                break;
+            }
         }
-        $parentSha = $headRef['object']['sha'];
+        if (!$parentSha) {
+            return ['success' => false, 'output' => 'Could not get HEAD ref after 3 attempts: ' . json_encode($headRef)];
+        }
 
         // Step 2: Collect files and create a blob for each one
         $files = $this->collectFiles($projectPath);
@@ -157,7 +165,6 @@ class GitHubAPKBuilder {
             // Skip unwanted files
             $ext = strtolower(pathinfo($relativePath, PATHINFO_EXTENSION));
             if (in_array($ext, ['apk', 'aab', 'zip', 'sqlite', 'sqlite-shm', 'sqlite-wal'])) continue;
-            if ($ext === 'jar') continue; // gradle-wrapper.jar not needed (using system gradle in Actions)
             if (@filesize($absolutePath) > 900000) continue; // skip files >900KB
 
             // Skip mipmap PNGs — Actions workflow generates placeholder icons

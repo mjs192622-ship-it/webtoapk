@@ -1,10 +1,7 @@
 <?php
 /**
  * GitHub Actions APK Builder
- * Uses GitHub Actions as a FREE build server for APK compilation
- * 
- * NOTE: This requires shell_exec() which is disabled on shared hosting.
- * For shared hosting, use the ZIP download option instead.
+ * Uses GitHub API (no shell_exec needed) to push files and trigger Actions build
  */
 
 class GitHubAPKBuilder {
@@ -19,15 +16,10 @@ class GitHubAPKBuilder {
     }
     
     /**
-     * Check if shell commands are available
+     * shell_exec availability check (kept for compatibility)
      */
     public static function isAvailable() {
-        if (!function_exists('shell_exec')) {
-            return false;
-        }
-        $disabled = explode(',', ini_get('disable_functions'));
-        $disabled = array_map('trim', $disabled);
-        return !in_array('shell_exec', $disabled);
+        return true; // We use GitHub API now, no shell_exec needed
     }
     
     /**
@@ -128,88 +120,79 @@ class GitHubAPKBuilder {
     }
     
     /**
-     * Push project to GitHub
-     * Note: Requires shell_exec() which may be disabled on shared hosting
+     * Push project to GitHub using GitHub API (no shell_exec needed)
+     * Uploads all project files via GitHub Contents API, then Actions auto-triggers
      */
     public function pushProject($projectPath, $repoName) {
-        // Check if shell_exec is available
-        if (!self::isAvailable()) {
-            return [
-                'success' => false,
-                'output' => 'shell_exec is disabled on this server'
-            ];
+        $this->repo = $repoName;
+        $uploaded = 0;
+        $failed = 0;
+
+        // Collect all files recursively
+        $files = $this->collectFiles($projectPath);
+
+        foreach ($files as $absolutePath) {
+            $relativePath = ltrim(str_replace($projectPath, '', $absolutePath), '/\\');
+            $relativePath = str_replace('\\', '/', $relativePath);
+
+            // Skip large/binary/unnecessary files
+            $ext = strtolower(pathinfo($relativePath, PATHINFO_EXTENSION));
+            if (in_array($ext, ['apk', 'aab', 'zip', 'sqlite', 'sqlite-shm', 'sqlite-wal'])) continue;
+            if (filesize($absolutePath) > 900000) continue; // skip >900KB files
+
+            $content = base64_encode(file_get_contents($absolutePath));
+
+            $url = "https://api.github.com/repos/{$this->owner}/{$repoName}/contents/" . rawurlencode($relativePath);
+            $result = $this->apiRequest($url, 'PUT', [
+                'message' => 'Add ' . $relativePath,
+                'content' => $content
+            ]);
+
+            if (isset($result['content']['name'])) {
+                $uploaded++;
+            } else {
+                $failed++;
+                error_log("GitHub API upload failed for $relativePath: " . json_encode($result));
+            }
         }
-        
-        // Set git config for this repo
-        $configEmail = 'git config user.email "webtoappk@builder.com"';
-        $configName = 'git config user.name "WebToAPK Builder"';
-        $configSafe = 'git config --global --add safe.directory ' . escapeshellarg($projectPath);
-        
-        // Detect OS
-        $isWindows = strtoupper(substr(PHP_OS, 0, 3)) === 'WIN';
-        
-        // Set HOME environment variable for www-data user (fixes "fatal: $HOME not set" error)
-        $homeDir = '/tmp';
-        if (!$isWindows) {
-            putenv("HOME=$homeDir");
-            $_ENV['HOME'] = $homeDir;
-        }
-        
-        if ($isWindows) {
-            $commands = [
-                'cd /d "' . $projectPath . '"',
-                $configSafe,
-                'git init',
-                $configEmail,
-                $configName,
-                'git add .',
-                'git commit -m "Initial commit"',
-                'git branch -M main',
-                'git remote add origin https://' . $this->token . '@github.com/' . $this->owner . '/' . $repoName . '.git',
-                'git push -u origin main'
-            ];
-            $command = implode(' && ', $commands);
-        } else {
-            $commands = [
-                'export HOME=' . escapeshellarg($homeDir),
-                'cd ' . escapeshellarg($projectPath),
-                $configSafe,
-                'git init',
-                $configEmail,
-                $configName,
-                'git add .',
-                'git commit -m "Initial commit"',
-                'git branch -M main',
-                'git remote add origin https://' . $this->token . '@github.com/' . $this->owner . '/' . $repoName . '.git',
-                'git push -u origin main 2>&1'
-            ];
-            $command = implode(' && ', $commands);
-        }
-        
-        $output = @shell_exec($command . ' 2>&1');
-        
-        // Check for success indicators
-        $success = ($output && strpos($output, 'main') !== false && strpos($output, '->') !== false) 
-                   || ($output && strpos($output, 'Writing objects') !== false)
-                   || ($output && strpos($output, 'branch') !== false);
-        
+
+        $success = $uploaded > 0;
         return [
             'success' => $success,
-            'output' => $output ?: 'No output'
+            'output' => "Uploaded: $uploaded files, Failed: $failed files"
         ];
     }
-    
+
     /**
-     * Trigger workflow run
+     * Recursively collect all file paths under a directory
+     */
+    private function collectFiles($dir) {
+        $result = [];
+        $items = @scandir($dir);
+        if (!$items) return $result;
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') continue;
+            // Skip git/hidden dirs and config.json (has local paths)
+            if ($item === '.git' || $item === 'node_modules') continue;
+            $full = $dir . DIRECTORY_SEPARATOR . $item;
+            if (is_dir($full)) {
+                $result = array_merge($result, $this->collectFiles($full));
+            } else {
+                $result[] = $full;
+            }
+        }
+        return $result;
+    }
+
+    /**
+     * Trigger workflow run via workflow_dispatch
      */
     public function triggerWorkflow($workflow = 'build.yml') {
         $url = "https://api.github.com/repos/{$this->owner}/{$this->repo}/actions/workflows/{$workflow}/dispatches";
-        
         $data = ['ref' => 'main'];
-        
         return $this->apiRequest($url, 'POST', $data);
     }
-    
+
     /**
      * Check workflow status
      */

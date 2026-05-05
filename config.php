@@ -80,6 +80,8 @@ function callGroqAPI($prompt) {
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+    curl_setopt($ch, CURLOPT_TIMEOUT, 8);           // Max 8s total
+    curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);    // Max 5s to connect
     curl_setopt($ch, CURLOPT_HTTPHEADER, [
         'Content-Type: application/json',
         'Authorization: Bearer ' . GROQ_API_KEY

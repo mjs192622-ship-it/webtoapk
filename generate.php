@@ -4,6 +4,9 @@
  * Generates Android APK Project from website URL
  */
 
+// Extend PHP execution limit (Render hard-kills at 30s HTTP, but this helps with PHP's own limit)
+set_time_limit(25);
+
 // Enable error reporting to log file
 ini_set('display_errors', 0);
 ini_set('log_errors', 1);

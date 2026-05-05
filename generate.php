@@ -12,15 +12,37 @@ ini_set('display_errors', 0);
 ini_set('log_errors', 1);
 ini_set('error_log', __DIR__ . '/error.log');
 
+// Buffer ALL output — any stray PHP notice/warning will be captured here
+// instead of corrupting the JSON response
+ob_start();
+
 require_once 'config.php';
 require_once 'auth.php';
 
+// Discard any output from require (e.g. BOM, whitespace, notices)
+ob_clean();
+
 header('Content-Type: application/json');
 
-// Custom error handler to catch all errors
+// Custom error handler — log errors but never print them
 set_error_handler(function($errno, $errstr, $errfile, $errline) {
     error_log("PHP Error [$errno]: $errstr in $errfile on line $errline");
-    return false;
+    return true; // true = suppress default PHP error output
+});
+
+// Shutdown function: catches PHP FATAL errors that bypass try/catch
+register_shutdown_function(function() {
+    $error = error_get_last();
+    if ($error && in_array($error['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR])) {
+        // Discard any partial output already in buffer
+        ob_clean();
+        error_log('PHP Fatal in generate.php: ' . $error['message'] . ' in ' . $error['file'] . ':' . $error['line']);
+        echo json_encode([
+            'success' => false,
+            'message' => 'Server error occurred. Please try again. (Fatal: ' . $error['message'] . ')'
+        ]);
+    }
+    ob_end_flush();
 });
 
 // Check if request is POST
@@ -509,7 +531,9 @@ try {
     } else {
         throw new Exception('Failed to create download package');
     }
-} catch (Exception $e) {
+} catch (\Throwable $e) {
+    // Catches both Exception AND Error (TypeError, ValueError, etc.) — PHP 8 safety
+    error_log('generate.php error: ' . get_class($e) . ': ' . $e->getMessage() . ' in ' . $e->getFile() . ':' . $e->getLine());
     echo json_encode([
         'success' => false,
         'message' => 'Error generating project: ' . $e->getMessage()

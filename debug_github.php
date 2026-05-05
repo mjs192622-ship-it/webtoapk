@@ -1,8 +1,144 @@
 <?php
 /**
- * GitHub Build Diagnostic - DELETE AFTER USE
+ * GitHub Build Diagnostic v2 - DELETE AFTER USE
  * Access: https://webtooapk.com/debug_github.php
  */
+header('Content-Type: text/plain');
+
+require_once 'config.php';
+
+$token = GITHUB_TOKEN;
+$owner = GITHUB_OWNER;
+
+function ghApi($url, $method = 'GET', $data = null) {
+    global $token;
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => $url,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 20,
+        CURLOPT_HTTPHEADER => [
+            'Authorization: Bearer ' . $token,
+            'Accept: application/vnd.github.v3+json',
+            'User-Agent: WebToAPK-Diag',
+            'Content-Type: application/json',
+        ],
+        CURLOPT_CUSTOMREQUEST => $method,
+    ]);
+    if ($data) curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+    $resp = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    return [$code, json_decode($resp, true)];
+}
+
+echo "=== GitHub Diagnostic v2 ===\n\n";
+echo "Token: " . substr($token,0,8) . "... (len=" . strlen($token) . ")\n";
+echo "Owner: $owner\n\n";
+
+// Check most recent apk-* repo content
+echo "--- Most recent apk-* repo content check ---\n";
+[$c, $repos] = ghApi("https://api.github.com/search/repositories?q=user:{$owner}+apk-+in:name&sort=created&order=desc&per_page=3");
+if (isset($repos['items'][0])) {
+    $repo = $repos['items'][0];
+    $rname = $repo['name'];
+    echo "Checking: $rname (created: " . $repo['created_at'] . ")\n";
+    [$c2, $contents] = ghApi("https://api.github.com/repos/{$owner}/{$rname}/contents/");
+    if (is_array($contents) && isset($contents[0]['name'])) {
+        echo "Files in root: " . implode(', ', array_column($contents, 'name')) . "\n";
+    } elseif (isset($contents['message'])) {
+        echo "Content error: " . $contents['message'] . "\n";
+    }
+    [$c3, $runs] = ghApi("https://api.github.com/repos/{$owner}/{$rname}/actions/runs?per_page=3");
+    echo "Actions runs: " . ($runs['total_count'] ?? 'error') . "\n";
+    if (!empty($runs['workflow_runs'])) {
+        foreach ($runs['workflow_runs'] as $run) {
+            echo "  - #" . $run['run_number'] . " " . $run['status'] . "/" . $run['conclusion'] . " " . $run['html_url'] . "\n";
+        }
+    }
+} else {
+    echo "No repos found or search failed\n";
+}
+echo "\n";
+
+// Test new approach: auto_init=true + blobs
+echo "--- Test NEW approach (auto_init=true + blobs) ---\n";
+$testRepo = 'apk-diag-' . time();
+
+// Create repo with auto_init=true
+[$c, $result] = ghApi('https://api.github.com/user/repos', 'POST', [
+    'name' => $testRepo, 'private' => false, 'auto_init' => true,
+]);
+echo "Create repo HTTP: $c\n";
+if (!isset($result['id'])) { echo "FAILED: " . json_encode($result) . "\n"; exit; }
+echo "Repo created: " . $result['full_name'] . "\n";
+
+sleep(1); // Wait for GitHub to initialize
+
+// Get HEAD ref
+[$c, $headRef] = ghApi("https://api.github.com/repos/{$owner}/{$testRepo}/git/ref/heads/main");
+echo "HEAD ref HTTP: $c\n";
+if (!isset($headRef['object']['sha'])) { 
+    // try master
+    [$c, $headRef] = ghApi("https://api.github.com/repos/{$owner}/{$testRepo}/git/ref/heads/master");
+    echo "HEAD ref (master) HTTP: $c\n";
+}
+$parentSha = $headRef['object']['sha'] ?? null;
+echo "Parent SHA: " . ($parentSha ? substr($parentSha,0,8).'...' : 'NOT FOUND') . "\n";
+
+if ($parentSha) {
+    // Create blob for a text file
+    [$c, $blob] = ghApi("https://api.github.com/repos/{$owner}/{$testRepo}/git/blobs", 'POST', [
+        'content' => base64_encode('# Test Android Project'), 'encoding' => 'base64',
+    ]);
+    echo "Blob HTTP: $c, SHA: " . ($blob['sha'] ?? 'FAILED: ' . json_encode($blob)) . "\n";
+
+    // Create blob for a binary-like file
+    [$c, $blob2] = ghApi("https://api.github.com/repos/{$owner}/{$testRepo}/git/blobs", 'POST', [
+        'content' => base64_encode(str_repeat("\x00\xFF\xAB\xCD", 100)), 'encoding' => 'base64',
+    ]);
+    echo "Binary blob HTTP: $c, SHA: " . ($blob2['sha'] ?? 'FAILED: ' . json_encode($blob2)) . "\n";
+
+    if (isset($blob['sha']) && isset($blob2['sha'])) {
+        // Create tree
+        [$c, $tree] = ghApi("https://api.github.com/repos/{$owner}/{$testRepo}/git/trees", 'POST', [
+            'tree' => [
+                ['path' => 'README.md', 'mode' => '100644', 'type' => 'blob', 'sha' => $blob['sha']],
+                ['path' => 'test.bin', 'mode' => '100644', 'type' => 'blob', 'sha' => $blob2['sha']],
+            ]
+        ]);
+        echo "Tree HTTP: $c, SHA: " . ($tree['sha'] ?? 'FAILED: ' . json_encode($tree)) . "\n";
+
+        if (isset($tree['sha'])) {
+            // Create commit
+            [$c, $commit] = ghApi("https://api.github.com/repos/{$owner}/{$testRepo}/git/commits", 'POST', [
+                'message' => 'Add Android project', 'tree' => $tree['sha'], 'parents' => [$parentSha],
+            ]);
+            echo "Commit HTTP: $c, SHA: " . ($commit['sha'] ?? 'FAILED: ' . json_encode($commit)) . "\n";
+
+            if (isset($commit['sha'])) {
+                // PATCH ref
+                [$c, $ref] = ghApi("https://api.github.com/repos/{$owner}/{$testRepo}/git/refs/heads/main", 'PATCH', [
+                    'sha' => $commit['sha'], 'force' => false,
+                ]);
+                echo "PATCH ref HTTP: $c\n";
+                if (isset($ref['ref'])) {
+                    echo "\n✅ FULL PUSH SUCCESS!\n";
+                    echo "Repo: https://github.com/{$owner}/{$testRepo}\n";
+                    echo "Actions will trigger on next push: https://github.com/{$owner}/{$testRepo}/actions\n";
+                } else {
+                    echo "Ref PATCH FAILED: " . json_encode($ref) . "\n";
+                }
+            }
+        }
+    }
+}
+
+// Cleanup
+[$c] = ghApi("https://api.github.com/repos/{$owner}/{$testRepo}", 'DELETE');
+echo "\nCleanup (delete test repo) HTTP: $c " . ($c===204?'(OK)':'(FAILED)') . "\n";
+echo "\n=== Done ===\n";
+
 header('Content-Type: text/plain');
 
 require_once 'config.php';

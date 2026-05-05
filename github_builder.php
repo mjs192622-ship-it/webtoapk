@@ -123,7 +123,7 @@ class GitHubAPKBuilder {
             'name' => $name,
             'description' => $description,
             'private' => false,
-            'auto_init' => false
+            'auto_init' => true  // Initialize repo so git objects (blobs) can be created immediately
         ];
         
         return $this->apiRequest($url, 'POST', $data);
@@ -136,9 +136,19 @@ class GitHubAPKBuilder {
     public function pushProject($projectPath, $repoName) {
         $this->repo = $repoName;
 
+        // Step 1: Get HEAD ref SHA (auto_init created an initial commit on main)
+        $headRef = $this->apiRequest(
+            "https://api.github.com/repos/{$this->owner}/{$repoName}/git/ref/heads/main",
+            'GET'
+        );
+        if (!isset($headRef['object']['sha'])) {
+            return ['success' => false, 'output' => 'Could not get HEAD ref: ' . json_encode($headRef)];
+        }
+        $parentSha = $headRef['object']['sha'];
+
+        // Step 2: Collect files and create a blob for each one
         $files = $this->collectFiles($projectPath);
         $treeItems = [];
-        $binaryExts = ['png', 'jpg', 'jpeg', 'gif', 'ico', 'jar', 'keystore', 'webp'];
 
         foreach ($files as $absolutePath) {
             $relativePath = ltrim(str_replace($projectPath, '', $absolutePath), '/\\');
@@ -147,69 +157,71 @@ class GitHubAPKBuilder {
             // Skip unwanted files
             $ext = strtolower(pathinfo($relativePath, PATHINFO_EXTENSION));
             if (in_array($ext, ['apk', 'aab', 'zip', 'sqlite', 'sqlite-shm', 'sqlite-wal'])) continue;
-            if (@filesize($absolutePath) > 1000000) continue; // skip >1MB
+            if ($ext === 'jar') continue; // gradle-wrapper.jar not needed (using system gradle in Actions)
+            if (@filesize($absolutePath) > 900000) continue; // skip files >900KB
 
-            // Skip mipmap PNG files — each needs a separate blob API call (10+ files × 2s = 20s timeout)
-            // Adaptive icons (mipmap-anydpi-v26/*.xml) are text files and will be included
+            // Skip mipmap PNGs — Actions workflow generates placeholder icons
             if ($ext === 'png' && strpos($relativePath, 'mipmap-') !== false) continue;
 
             $fileContent = file_get_contents($absolutePath);
             if ($fileContent === false) continue;
 
-            if (in_array($ext, $binaryExts)) {
-                // Binary files: must create blob first (separate API call)
-                $blob = $this->apiRequest(
-                    "https://api.github.com/repos/{$this->owner}/{$repoName}/git/blobs",
-                    'POST',
-                    ['content' => base64_encode($fileContent), 'encoding' => 'base64']
-                );
-                if (!isset($blob['sha'])) continue;
-                $treeItems[] = ['path' => $relativePath, 'mode' => '100644', 'type' => 'blob', 'sha' => $blob['sha']];
-            } else {
-                // Text files: embed content directly in tree (no extra API call needed)
-                $treeItems[] = ['path' => $relativePath, 'mode' => '100644', 'type' => 'blob', 'content' => $fileContent];
+            // Create blob for every file using base64 (works for text AND binary)
+            // This is safe because the repo is now auto_init'd (not empty)
+            $blob = $this->apiRequest(
+                "https://api.github.com/repos/{$this->owner}/{$repoName}/git/blobs",
+                'POST',
+                ['content' => base64_encode($fileContent), 'encoding' => 'base64']
+            );
+            if (!isset($blob['sha'])) {
+                error_log("Blob failed for $relativePath: " . json_encode($blob));
+                continue; // skip this file but continue with others
             }
+            $treeItems[] = [
+                'path' => $relativePath,
+                'mode' => '100644',
+                'type' => 'blob',
+                'sha'  => $blob['sha']
+            ];
         }
 
         if (empty($treeItems)) {
             return ['success' => false, 'output' => 'No files collected'];
         }
 
-        // Single API call to create entire file tree
+        // Step 3: Create tree with SHA references (tiny JSON payload — no inline file content)
         $tree = $this->apiRequest(
             "https://api.github.com/repos/{$this->owner}/{$repoName}/git/trees",
             'POST',
             ['tree' => $treeItems]
         );
-
         if (!isset($tree['sha'])) {
             return ['success' => false, 'output' => 'Tree creation failed: ' . json_encode($tree)];
         }
 
-        // Create commit (orphan — new empty repo has no parent)
+        // Step 4: Create commit on top of the auto_init commit
         $commit = $this->apiRequest(
             "https://api.github.com/repos/{$this->owner}/{$repoName}/git/commits",
             'POST',
-            ['message' => 'Add Android project', 'tree' => $tree['sha'], 'parents' => []]
+            ['message' => 'Add Android project', 'tree' => $tree['sha'], 'parents' => [$parentSha]]
         );
-
         if (!isset($commit['sha'])) {
             return ['success' => false, 'output' => 'Commit creation failed: ' . json_encode($commit)];
         }
 
-        // Create main branch pointing to new commit
+        // Step 5: PATCH (update) the existing main branch ref — don't create a new one
         $ref = $this->apiRequest(
-            "https://api.github.com/repos/{$this->owner}/{$repoName}/git/refs",
-            'POST',
-            ['ref' => 'refs/heads/main', 'sha' => $commit['sha']]
+            "https://api.github.com/repos/{$this->owner}/{$repoName}/git/refs/heads/main",
+            'PATCH',
+            ['sha' => $commit['sha'], 'force' => false]
         );
 
         $success = isset($ref['ref']);
         return [
             'success' => $success,
             'output' => $success
-                ? 'Pushed ' . count($treeItems) . ' files via Tree API'
-                : 'Ref creation failed: ' . json_encode($ref)
+                ? 'Pushed ' . count($treeItems) . ' files via Tree API (blob-per-file)'
+                : 'Ref update failed: ' . json_encode($ref)
         ];
     }
 

@@ -2223,6 +2223,20 @@ public class NotificationWorker extends Worker {
         file_put_contents($buildDir . 'app/src/main/java/' . $packagePath . '/NotificationWorker.java', $notifWorker);
 
         // Generate BPFirebaseMessagingService.java
+        // Pre-calculate server URL safely (avoid inline IIFE which could output PHP notices)
+        $parsedUrl = parse_url($config['website_url']);
+        $fcmServerOrigin = '';
+        if (!empty($parsedUrl['scheme']) && !empty($parsedUrl['host'])) {
+            $fcmServerOrigin = $parsedUrl['scheme'] . '://' . $parsedUrl['host'];
+            if (!empty($parsedUrl['port']) && $parsedUrl['port'] != 443 && $parsedUrl['port'] != 80) {
+                $fcmServerOrigin .= ':' . $parsedUrl['port'];
+            }
+        } elseif (!empty($parsedUrl['path'])) {
+            $fcmServerOrigin = 'https://' . $parsedUrl['path'];
+        } else {
+            $fcmServerOrigin = rtrim($config['website_url'], '/');
+        }
+
         $fcmService = 'package ' . $config['package_name'] . ';
 
 import android.app.NotificationChannel;
@@ -2243,7 +2257,7 @@ import java.nio.charset.StandardCharsets;
 
 public class BPFirebaseMessagingService extends FirebaseMessagingService {
 
-    private static final String SERVER_URL = "' . (function() use ($config) { $p = parse_url($config['website_url']); $origin = ($p['scheme'] ?? 'https') . '://' . ($p['host'] ?? $p['path'] ?? ''); if (isset($p['port']) && $p['port'] != 443 && $p['port'] != 80) $origin .= ':' . $p['port']; return $origin; })() . '/admin/fcm_token.php";
+    private static final String SERVER_URL = "' . $fcmServerOrigin . '/admin/fcm_token.php";
 
     @Override
     public void onNewToken(@NonNull String token) {

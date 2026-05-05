@@ -120,46 +120,82 @@ class GitHubAPKBuilder {
     }
     
     /**
-     * Push project to GitHub using GitHub API (no shell_exec needed)
-     * Uploads all project files via GitHub Contents API, then Actions auto-triggers
+     * Push project to GitHub using Git Tree API
+     * Creates all files in ONE commit (3-4 API calls total, works within Render 30s timeout)
      */
     public function pushProject($projectPath, $repoName) {
         $this->repo = $repoName;
-        $uploaded = 0;
-        $failed = 0;
 
-        // Collect all files recursively
         $files = $this->collectFiles($projectPath);
+        $treeItems = [];
+        $binaryExts = ['png', 'jpg', 'jpeg', 'gif', 'ico', 'jar', 'keystore', 'webp'];
 
         foreach ($files as $absolutePath) {
             $relativePath = ltrim(str_replace($projectPath, '', $absolutePath), '/\\');
             $relativePath = str_replace('\\', '/', $relativePath);
 
-            // Skip large/binary/unnecessary files
+            // Skip unwanted files
             $ext = strtolower(pathinfo($relativePath, PATHINFO_EXTENSION));
             if (in_array($ext, ['apk', 'aab', 'zip', 'sqlite', 'sqlite-shm', 'sqlite-wal'])) continue;
-            if (filesize($absolutePath) > 900000) continue; // skip >900KB files
+            if (@filesize($absolutePath) > 1000000) continue; // skip >1MB
 
-            $content = base64_encode(file_get_contents($absolutePath));
+            $fileContent = file_get_contents($absolutePath);
+            if ($fileContent === false) continue;
 
-            $url = "https://api.github.com/repos/{$this->owner}/{$repoName}/contents/" . rawurlencode($relativePath);
-            $result = $this->apiRequest($url, 'PUT', [
-                'message' => 'Add ' . $relativePath,
-                'content' => $content
-            ]);
-
-            if (isset($result['content']['name'])) {
-                $uploaded++;
+            if (in_array($ext, $binaryExts)) {
+                // Binary files: must create blob first (separate API call)
+                $blob = $this->apiRequest(
+                    "https://api.github.com/repos/{$this->owner}/{$repoName}/git/blobs",
+                    'POST',
+                    ['content' => base64_encode($fileContent), 'encoding' => 'base64']
+                );
+                if (!isset($blob['sha'])) continue;
+                $treeItems[] = ['path' => $relativePath, 'mode' => '100644', 'type' => 'blob', 'sha' => $blob['sha']];
             } else {
-                $failed++;
-                error_log("GitHub API upload failed for $relativePath: " . json_encode($result));
+                // Text files: embed content directly in tree (no extra API call needed)
+                $treeItems[] = ['path' => $relativePath, 'mode' => '100644', 'type' => 'blob', 'content' => $fileContent];
             }
         }
 
-        $success = $uploaded > 0;
+        if (empty($treeItems)) {
+            return ['success' => false, 'output' => 'No files collected'];
+        }
+
+        // Single API call to create entire file tree
+        $tree = $this->apiRequest(
+            "https://api.github.com/repos/{$this->owner}/{$repoName}/git/trees",
+            'POST',
+            ['tree' => $treeItems]
+        );
+
+        if (!isset($tree['sha'])) {
+            return ['success' => false, 'output' => 'Tree creation failed: ' . json_encode($tree)];
+        }
+
+        // Create commit (orphan — new empty repo has no parent)
+        $commit = $this->apiRequest(
+            "https://api.github.com/repos/{$this->owner}/{$repoName}/git/commits",
+            'POST',
+            ['message' => 'Add Android project', 'tree' => $tree['sha'], 'parents' => []]
+        );
+
+        if (!isset($commit['sha'])) {
+            return ['success' => false, 'output' => 'Commit creation failed: ' . json_encode($commit)];
+        }
+
+        // Create main branch pointing to new commit
+        $ref = $this->apiRequest(
+            "https://api.github.com/repos/{$this->owner}/{$repoName}/git/refs",
+            'POST',
+            ['ref' => 'refs/heads/main', 'sha' => $commit['sha']]
+        );
+
+        $success = isset($ref['ref']);
         return [
             'success' => $success,
-            'output' => "Uploaded: $uploaded files, Failed: $failed files"
+            'output' => $success
+                ? 'Pushed ' . count($treeItems) . ' files via Tree API'
+                : 'Ref creation failed: ' . json_encode($ref)
         ];
     }
 
@@ -246,6 +282,7 @@ class GitHubAPKBuilder {
         curl_setopt_array($ch, [
             CURLOPT_URL => $url,
             CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT => 20,
             CURLOPT_HTTPHEADER => [
                 'Authorization: Bearer ' . $this->token,
                 'Accept: application/vnd.github.v3+json',

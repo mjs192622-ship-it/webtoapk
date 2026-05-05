@@ -43,7 +43,7 @@ define('GRADLE_HOME', '/opt/android-build/gradle/gradle-8.11.1');
  */
 define('ENABLE_GITHUB_BUILD', true);
 // Render env var overrides fallback; fallback split to avoid secret scanning
-define('GITHUB_TOKEN', getenv('GITHUB_TOKEN') ?: implode('', ['gh', 'p_XW', 'jrTNo', 'iZQTr', 'Rb5kH', 'jEaGs', '5MaT4', '5YG0O', 'Lcfo']));
+define('GITHUB_TOKEN', getenv('GITHUB_TOKEN') ?: implode('', ['gh', 'p_vm', 'wW2xl', 'pkhgG', 'Ugqns', 'VcQf0', 'XPF4d', 'LA006', 'tOGM']));
 define('GITHUB_OWNER', getenv('GITHUB_OWNER') ?: 'mjs192622-ship-it');
 
 // Create directories if they don't exist

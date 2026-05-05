@@ -380,8 +380,10 @@ $apkConfig['google_services_json'] = $googleServicesJsonContent;
 $apkConfig['firebase_service_account'] = $firebaseServiceAccountContent;
 
 // Generate the Android project files
+error_log("generate.php: Starting generateAndroidProject for build $buildId, storage_permission=" . ($apkConfig['storage_permission'] ? 'true' : 'false'));
 try {
     generateAndroidProject($buildDir, $apkConfig);
+    error_log("generate.php: generateAndroidProject completed for build $buildId");
     // Remove temp firebase file after project generation
     @unlink($buildDir . '_google_services_tmp.json');
     

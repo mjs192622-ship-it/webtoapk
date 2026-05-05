@@ -8,11 +8,13 @@ RUN apt-get update && apt-get install -y \
     libpng-dev \
     libjpeg-dev \
     libfreetype6-dev \
+    libwebp-dev \
     libonig-dev \
     libxml2-dev \
     libsqlite3-dev \
     curl \
     git \
+    && docker-php-ext-configure gd --with-freetype --with-jpeg --with-webp \
     && docker-php-ext-install \
         pdo \
         pdo_mysql \

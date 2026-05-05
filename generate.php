@@ -2552,58 +2552,72 @@ zipStorePath=wrapper/dists';
     
     // Copy icons if provided
     if ($config['app_icon_path'] && file_exists($config['app_icon_path'])) {
-        // Remove adaptive icon XMLs so PNG icons in mipmap-* dirs take priority on Android 8+
-        @unlink($buildDir . 'app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml');
-        @unlink($buildDir . 'app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml');
-        
-        // Resize icon to proper sizes for each density
-        $iconSizes = [
-            'mipmap-mdpi' => 48,
-            'mipmap-hdpi' => 72,
-            'mipmap-xhdpi' => 96,
-            'mipmap-xxhdpi' => 144,
-            'mipmap-xxxhdpi' => 192,
-        ];
-        
-        $sourceIcon = $config['app_icon_path'];
-        $imageInfo = @getimagesize($sourceIcon);
-        $sourceImage = null;
-        
-        if ($imageInfo) {
-            switch ($imageInfo[2]) {
-                case IMAGETYPE_PNG:
-                    $sourceImage = @imagecreatefrompng($sourceIcon);
-                    break;
-                case IMAGETYPE_JPEG:
-                    $sourceImage = @imagecreatefromjpeg($sourceIcon);
-                    break;
-                case IMAGETYPE_WEBP:
-                    $sourceImage = @imagecreatefromwebp($sourceIcon);
-                    break;
+        try {
+            // Remove adaptive icon XMLs so PNG icons in mipmap-* dirs take priority on Android 8+
+            @unlink($buildDir . 'app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml');
+            @unlink($buildDir . 'app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml');
+            
+            // Resize icon to proper sizes for each density
+            $iconSizes = [
+                'mipmap-mdpi' => 48,
+                'mipmap-hdpi' => 72,
+                'mipmap-xhdpi' => 96,
+                'mipmap-xxhdpi' => 144,
+                'mipmap-xxxhdpi' => 192,
+            ];
+            
+            $sourceIcon = $config['app_icon_path'];
+            $imageInfo = @getimagesize($sourceIcon);
+            $sourceImage = null;
+            $gdAvailable = function_exists('imagecreatetruecolor');
+            
+            if ($imageInfo && $gdAvailable) {
+                switch ($imageInfo[2]) {
+                    case IMAGETYPE_PNG:
+                        if (function_exists('imagecreatefrompng'))
+                            $sourceImage = @imagecreatefrompng($sourceIcon);
+                        break;
+                    case IMAGETYPE_JPEG:
+                        if (function_exists('imagecreatefromjpeg'))
+                            $sourceImage = @imagecreatefromjpeg($sourceIcon);
+                        break;
+                    case IMAGETYPE_WEBP:
+                        if (function_exists('imagecreatefromwebp'))
+                            $sourceImage = @imagecreatefromwebp($sourceIcon);
+                        break;
+                    case IMAGETYPE_GIF:
+                        if (function_exists('imagecreatefromgif'))
+                            $sourceImage = @imagecreatefromgif($sourceIcon);
+                        break;
+                }
             }
-        }
-        
-        foreach ($iconSizes as $dir => $size) {
+            
+            foreach ($iconSizes as $dir => $size) {
+                if ($sourceImage && $gdAvailable) {
+                    $resized = imagecreatetruecolor($size, $size);
+                    // Preserve transparency
+                    imagealphablending($resized, false);
+                    imagesavealpha($resized, true);
+                    $transparent = imagecolorallocatealpha($resized, 0, 0, 0, 127);
+                    imagefilledrectangle($resized, 0, 0, $size, $size, $transparent);
+                    imagecopyresampled($resized, $sourceImage, 0, 0, 0, 0, $size, $size, $imageInfo[0], $imageInfo[1]);
+                    imagepng($resized, $buildDir . 'app/src/main/res/' . $dir . '/ic_launcher.png');
+                    imagepng($resized, $buildDir . 'app/src/main/res/' . $dir . '/ic_launcher_round.png');
+                    imagedestroy($resized);
+                } else {
+                    // Fallback: copy the original file as-is (GitHub Actions workflow will handle it)
+                    copy($sourceIcon, $buildDir . 'app/src/main/res/' . $dir . '/ic_launcher.png');
+                    copy($sourceIcon, $buildDir . 'app/src/main/res/' . $dir . '/ic_launcher_round.png');
+                }
+            }
+            
             if ($sourceImage) {
-                $resized = imagecreatetruecolor($size, $size);
-                // Preserve transparency
-                imagealphablending($resized, false);
-                imagesavealpha($resized, true);
-                $transparent = imagecolorallocatealpha($resized, 0, 0, 0, 127);
-                imagefilledrectangle($resized, 0, 0, $size, $size, $transparent);
-                imagecopyresampled($resized, $sourceImage, 0, 0, 0, 0, $size, $size, $imageInfo[0], $imageInfo[1]);
-                imagepng($resized, $buildDir . 'app/src/main/res/' . $dir . '/ic_launcher.png');
-                imagepng($resized, $buildDir . 'app/src/main/res/' . $dir . '/ic_launcher_round.png');
-                imagedestroy($resized);
-            } else {
-                // Fallback: just copy the original
-                copy($sourceIcon, $buildDir . 'app/src/main/res/' . $dir . '/ic_launcher.png');
-                copy($sourceIcon, $buildDir . 'app/src/main/res/' . $dir . '/ic_launcher_round.png');
+                imagedestroy($sourceImage);
             }
-        }
-        
-        if ($sourceImage) {
-            imagedestroy($sourceImage);
+        } catch (\Throwable $e) {
+            // Icon processing failed — log it but DON'T crash the whole generation
+            // The GitHub Actions workflow will generate placeholder icons as fallback
+            error_log("Icon processing failed (non-fatal, using placeholder): " . $e->getMessage());
         }
     }
     

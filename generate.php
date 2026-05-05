@@ -374,7 +374,9 @@ try {
             $githubToken = GITHUB_TOKEN;
             $githubOwner = GITHUB_OWNER;
             
-            if (!empty($githubToken) && !empty($githubOwner)) {
+            if (empty($githubToken)) {
+                error_log("GitHub build skipped: GITHUB_TOKEN env var not set in Render");
+            } elseif (!empty($githubToken) && !empty($githubOwner)) {
                 $builder = new GitHubAPKBuilder($githubToken, $githubOwner, '');
                 
                 // Create workflow in project
@@ -395,11 +397,17 @@ try {
                         $githubBuildStarted = true;
                         $githubRepoUrl = "https://github.com/{$githubOwner}/{$repoName}";
                         
-                        // Save GitHub info to config
-                        $apkConfig['github_repo'] = $repoName;
-                        $apkConfig['github_url'] = $githubRepoUrl;
-                        file_put_contents($buildDir . 'config.json', json_encode($apkConfig, JSON_PRETTY_PRINT));
+                        // Save GitHub info to config (exclude sensitive data)
+                        $configToSave = $apkConfig;
+                        unset($configToSave['google_services_json'], $configToSave['firebase_service_account']);
+                        $configToSave['github_repo'] = $repoName;
+                        $configToSave['github_url'] = $githubRepoUrl;
+                        file_put_contents($buildDir . 'config.json', json_encode($configToSave, JSON_PRETTY_PRINT));
+                    } else {
+                        error_log("GitHub push failed: " . ($pushResult['output'] ?? 'unknown'));
                     }
+                } else {
+                    error_log("GitHub repo creation failed: " . json_encode($createResult));
                 }
             }
         } catch (Exception $e) {

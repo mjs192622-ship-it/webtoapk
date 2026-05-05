@@ -208,8 +208,10 @@ class GitHubAPKBuilder {
         if (!$items) return $result;
         foreach ($items as $item) {
             if ($item === '.' || $item === '..') continue;
-            // Skip git/hidden dirs and config.json (has local paths)
+            // Skip git/hidden dirs, sensitive files, and non-Android build artifacts
             if ($item === '.git' || $item === 'node_modules') continue;
+            // Skip config.json (contains private keys/credentials) and server-config/ (firebase service account)
+            if ($item === 'config.json' || $item === 'server-config') continue;
             $full = $dir . DIRECTORY_SEPARATOR . $item;
             if (is_dir($full)) {
                 $result = array_merge($result, $this->collectFiles($full));

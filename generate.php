@@ -439,7 +439,7 @@ try {
                 
                 // Create workflow in project
                 $projectPath = $buildDir;
-                $builder->initializeRepo($projectPath, $buildId);
+                $builder->initializeRepo($projectPath, $buildId, $appIconPath ?? null);
                 
                 // Create repo name
                 $repoName = 'apk-' . substr($buildId, 0, 8);

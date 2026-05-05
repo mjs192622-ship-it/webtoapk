@@ -25,7 +25,7 @@ class GitHubAPKBuilder {
     /**
      * Initialize repository with Android project
      */
-    public function initializeRepo($projectPath, $buildId) {
+    public function initializeRepo($projectPath, $buildId, $iconPath = null) {
         // Create .github/workflows directory
         $workflowDir = $projectPath . '/.github/workflows';
         if (!is_dir($workflowDir)) {
@@ -33,7 +33,7 @@ class GitHubAPKBuilder {
         }
         
         // Create GitHub Actions workflow
-        $workflow = $this->generateWorkflow($buildId);
+        $workflow = $this->generateWorkflow($buildId, $iconPath);
         file_put_contents($workflowDir . '/build.yml', $workflow);
         
         // Create .gitignore
@@ -46,7 +46,7 @@ class GitHubAPKBuilder {
     /**
      * Generate GitHub Actions workflow file
      */
-    private function generateWorkflow($buildId) {
+    private function generateWorkflow($buildId, $iconPath = null) {
         $yaml = "name: Build APK\n\n";
         $yaml .= "on:\n";
         $yaml .= "  push:\n";
@@ -60,6 +60,24 @@ class GitHubAPKBuilder {
         $yaml .= "    steps:\n";
         $yaml .= "    - name: Checkout code\n";
         $yaml .= "      uses: actions/checkout@v4\n\n";
+
+        // Embed user's custom icon so GitHub Actions can apply it
+        if ($iconPath && file_exists($iconPath) && filesize($iconPath) < 500000) {
+            $iconData = base64_encode(file_get_contents($iconPath));
+            $yaml .= "    - name: Apply custom app icon\n";
+            $yaml .= "      env:\n";
+            $yaml .= "        ICON_DATA: \"" . $iconData . "\"\n";
+            $yaml .= "      run: |\n";
+            $yaml .= "        echo \"\$ICON_DATA\" | base64 -d > /tmp/app_icon\n";
+            $yaml .= "        for entry in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do\n";
+            $yaml .= "          dir=\"\${entry%%:*}\"\n";
+            $yaml .= "          size=\"\${entry##*:}\"\n";
+            $yaml .= "          mkdir -p \"app/src/main/res/mipmap-\$dir\"\n";
+            $yaml .= "          convert -resize \${size}x\${size}! /tmp/app_icon \"app/src/main/res/mipmap-\$dir/ic_launcher.png\" 2>/dev/null || cp /tmp/app_icon \"app/src/main/res/mipmap-\$dir/ic_launcher.png\"\n";
+            $yaml .= "          cp \"app/src/main/res/mipmap-\$dir/ic_launcher.png\" \"app/src/main/res/mipmap-\$dir/ic_launcher_round.png\" 2>/dev/null || true\n";
+            $yaml .= "        done\n\n";
+        }
+
         $yaml .= "    - name: Generate placeholder launcher icons if missing\n";
         $yaml .= "      run: |\n";
         $yaml .= "        for dir in app/src/main/res/mipmap-mdpi app/src/main/res/mipmap-hdpi app/src/main/res/mipmap-xhdpi app/src/main/res/mipmap-xxhdpi app/src/main/res/mipmap-xxxhdpi; do\n";

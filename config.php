@@ -42,8 +42,8 @@ define('GRADLE_HOME', '/opt/android-build/gradle/gradle-8.11.1');
  * Set GITHUB_TOKEN and GITHUB_OWNER in Render environment variables
  */
 define('ENABLE_GITHUB_BUILD', true);
-// Token split to avoid secret scanning (reassembled at runtime)
-define('GITHUB_TOKEN', getenv('GITHUB_TOKEN') ?: implode('', ['ghp', '_XWjrTNoi', 'ZQTrRb5k', 'HjEaGs5M', 'aT45YG0OLcfo']));
+// Set GITHUB_TOKEN in Render dashboard: Environment → Add GITHUB_TOKEN
+define('GITHUB_TOKEN', getenv('GITHUB_TOKEN') ?: '');
 define('GITHUB_OWNER', getenv('GITHUB_OWNER') ?: 'mjs192622-ship-it');
 
 // Create directories if they don't exist

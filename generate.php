@@ -33,6 +33,24 @@ set_error_handler(function($errno, $errstr, $errfile, $errline) {
 // JSON flags: never silently fail on invalid UTF-8 (would output empty = "An error occurred" in JS)
 define('JSON_FLAGS', JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
 
+
+/**
+ * Safely normalize hex colors coming from color picker/text fields.
+ * Accepts #RRGGBB, RRGGBB, #RGB, RGB. Falls back if invalid/empty.
+ */
+function sanitizeHexColorValue($value, $fallback) {
+    $value = trim((string)$value);
+    $fallback = strtoupper($fallback);
+    if (preg_match('/^#?([0-9a-fA-F]{3})$/', $value, $m)) {
+        $chars = str_split($m[1]);
+        return '#' . strtoupper($chars[0] . $chars[0] . $chars[1] . $chars[1] . $chars[2] . $chars[2]);
+    }
+    if (preg_match('/^#?([0-9a-fA-F]{6})$/', $value, $m)) {
+        return '#' . strtoupper($m[1]);
+    }
+    return $fallback;
+}
+
 // Shutdown function: catches PHP FATAL errors that bypass try/catch
 register_shutdown_function(function() {
     $error = error_get_last();
@@ -71,14 +89,14 @@ $versionCode = intval($_POST['version_code'] ?? 1);
 $orientation = $_POST['orientation'] ?? 'both';
 $fullscreen = $_POST['fullscreen'] ?? 'no';
 $minSdk = intval($_POST['min_sdk'] ?? 21);
-$statusBarColor = $_POST['status_bar_color'] ?? '#4f46e5';
-$loadingBarColor = $_POST['loading_bar_color'] ?? '#6366f1';
+$statusBarColor = sanitizeHexColorValue($_POST['status_bar_color'] ?? '#4f46e5', '#4F46E5');
+$loadingBarColor = sanitizeHexColorValue($_POST['loading_bar_color'] ?? '#6366f1', '#6366F1');
 $customUserAgent = trim($_POST['custom_user_agent'] ?? '');
 $jsInjection = trim($_POST['js_injection'] ?? '');
 
 // Splash screen settings
 $enableSplash = isset($_POST['enable_splash']) ? true : false;
-$splashColor = $_POST['splash_color'] ?? '#6366f1';
+$splashColor = sanitizeHexColorValue($_POST['splash_color'] ?? '#6366f1', '#6366F1');
 $splashDuration = intval($_POST['splash_duration'] ?? 2);
 
 // Additional features
@@ -110,7 +128,7 @@ $jsBridge = isset($_POST['js_bridge']) ? true : false;
 $fabEnabled = isset($_POST['fab_enabled']) ? true : false;
 $fabAction = in_array($_POST['fab_action'] ?? '', ['whatsapp','call','email','url','sms','telegram']) ? $_POST['fab_action'] : 'whatsapp';
 $fabValue = trim($_POST['fab_value'] ?? '');
-$fabColor = $_POST['fab_color'] ?? '#25D366';
+$fabColor = sanitizeHexColorValue($_POST['fab_color'] ?? '#25D366', '#25D366');
 $fabIcon = in_array($_POST['fab_icon'] ?? '', ['chat','phone','email','whatsapp','help','cart']) ? $_POST['fab_icon'] : 'chat';
 $toolbarLabels = $_POST['toolbar_label'] ?? [];
 $toolbarUrls = $_POST['toolbar_url'] ?? [];
@@ -248,20 +266,8 @@ $buildDir = OUTPUT_DIR . $buildId . '/';
 mkdir($buildDir, 0777, true);
 
 // Handle icon uploads
-$appIconPath = null;
-$splashIconPath = null;
-
-if (isset($_FILES['app_icon']) && $_FILES['app_icon']['error'] === UPLOAD_ERR_OK) {
-    $appIconName = 'app_icon_' . $buildId . '.png';
-    $appIconPath = UPLOAD_DIR . $appIconName;
-    move_uploaded_file($_FILES['app_icon']['tmp_name'], $appIconPath);
-}
-
-if (isset($_FILES['splash_icon']) && $_FILES['splash_icon']['error'] === UPLOAD_ERR_OK) {
-    $splashIconName = 'splash_icon_' . $buildId . '.png';
-    $splashIconPath = UPLOAD_DIR . $splashIconName;
-    move_uploaded_file($_FILES['splash_icon']['tmp_name'], $splashIconPath);
-}
+$appIconPath = saveUploadedImageFile('app_icon', 'app_icon', $buildId);
+$splashIconPath = saveUploadedImageFile('splash_icon', 'splash_icon', $buildId);
 
 // Use AI to generate app description (user can override)
 $appDescription = "";
@@ -487,7 +493,7 @@ try {
             'package_name' => $packageName,
             'website_url' => $websiteUrl,
             'version' => $version,
-            'icon_path' => !empty($_FILES['app_icon']['name']) ? 'uploads/' . $buildId . '_icon.png' : null,
+            'icon_path' => $appIconPath ? 'uploads/' . basename($appIconPath) : null,
             'status' => ($localBuildQueued || $githubBuildStarted) ? 'building' : 'generated',
             'download_url' => 'download.php?id=' . $buildId,
             'config_json' => json_encode(['features' => array_filter([
@@ -1101,7 +1107,7 @@ import androidx.core.content.ContextCompat;' : '');
     // Always gather runtime permissions regardless of push notification state
     if ($config['camera_permission'])       $runtimePermissions[] = 'Manifest.permission.CAMERA';
     if ($config['microphone_permission'])   $runtimePermissions[] = 'Manifest.permission.RECORD_AUDIO';
-    if ($config['location_permission'])     $runtimePermissions[] = 'Manifest.permission.ACCESS_FINE_LOCATION';
+    if ($config['location_permission'])     { $runtimePermissions[] = 'Manifest.permission.ACCESS_FINE_LOCATION'; $runtimePermissions[] = 'Manifest.permission.ACCESS_COARSE_LOCATION'; }
     if ($config['contacts_permission'])     { $runtimePermissions[] = 'Manifest.permission.READ_CONTACTS'; $runtimePermissions[] = 'Manifest.permission.WRITE_CONTACTS'; }
     if ($config['calendar_permission'])     { $runtimePermissions[] = 'Manifest.permission.READ_CALENDAR'; $runtimePermissions[] = 'Manifest.permission.WRITE_CALENDAR'; }
     if ($config['phone_state_permission'])  $runtimePermissions[] = 'Manifest.permission.READ_PHONE_STATE';
@@ -1207,7 +1213,9 @@ public class MainActivity extends ' . ($config['file_upload_camera'] || $config[
 
     private WebView webView;
     private ProgressBar progressBar;
-    private String fcmTokenForWebView = "";' . (in_array($config['loading_style'], ['circular', 'both']) ? '
+    private String fcmTokenForWebView = "";' . ($config['location_permission'] ? '
+    private String pendingGeoOrigin;
+    private GeolocationPermissions.Callback pendingGeoCallback;' : '') . (in_array($config['loading_style'], ['circular', 'both']) ? '
     private ProgressBar progressBarCircular;' : '') . '
     private static final String WEBSITE_URL = "' . $config['website_url'] . '";' . ($config['pull_to_refresh'] ? '
     private SwipeRefreshLayout swipeRefresh;' : '') . ($config['file_upload_camera'] ? '
@@ -1235,9 +1243,11 @@ public class MainActivity extends ' . ($config['file_upload_camera'] || $config[
             | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
             | View.SYSTEM_UI_FLAG_FULLSCREEN
             | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY);' : '') . ($config['fullscreen'] ? '' : '
-        // Set status bar color
+        // Set system bar colors
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-            getWindow().setStatusBarColor(Color.parseColor("' . $config['status_bar_color'] . '"));
+            int systemBarColor = Color.parseColor("' . $config['status_bar_color'] . '");
+            getWindow().setStatusBarColor(systemBarColor);
+            getWindow().setNavigationBarColor(systemBarColor);
         }') . '
         setContentView(R.layout.activity_main);
 
@@ -1293,14 +1303,9 @@ public class MainActivity extends ' . ($config['file_upload_camera'] || $config[
         // Handle deep link intent
         handleIntent(getIntent());
         
-        if (isNetworkAvailable()) {
-            webView.loadUrl(WEBSITE_URL);
-        } else {
-            webView.loadData(
-                "' . (!empty($config['offline_page_html']) ? addslashes($config['offline_page_html']) : '<html><body style=\"display:flex;justify-content:center;align-items:center;height:100vh;font-family:sans-serif;background:#1e293b;color:white;margin:0;\"><div style=\"text-align:center;\"><div style=\"font-size:64px;margin-bottom:20px;\">📶</div><h2 style=\"margin:0 0 10px;\">No Internet Connection</h2><p style=\"color:#94a3b8;margin:0 0 20px;\">Please check your connection and try again</p><button onclick=\"window.location.reload()\" style=\"padding:12px 24px;background:#6366f1;color:white;border:none;border-radius:8px;font-size:16px;cursor:pointer;\">Retry</button></div></body></html>') . '"' . ',
-                "text/html", "UTF-8"
-            );
-        }
+        // Load directly; ConnectivityManager can be unreliable on some devices/VPNs.
+        // WebView will show its own error page if the connection is actually unavailable.
+        webView.loadUrl(WEBSITE_URL);
     }' . ($config['rate_app_launches'] > 0 ? '
 
     private void checkAndShowRateDialog(int targetLaunches) {
@@ -1342,7 +1347,10 @@ public class MainActivity extends ' . ($config['file_upload_camera'] || $config[
         webSettings.setLoadsImagesAutomatically(true);
         webSettings.setMixedContentMode(WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
         webSettings.setCacheMode(WebSettings.LOAD_DEFAULT);
-        webSettings.setDatabaseEnabled(true);' . ($config['location_permission'] ? '
+        webSettings.setDatabaseEnabled(true);
+        webSettings.setJavaScriptCanOpenWindowsAutomatically(true);
+        webSettings.setMediaPlaybackRequiresUserGesture(false);
+        android.webkit.CookieManager.getInstance().setAcceptCookie(true);' . ($config['location_permission'] ? '
         webSettings.setGeolocationEnabled(true);' : '') . (!empty($config['custom_user_agent']) ? '
         webSettings.setUserAgentString("' . addslashes($config['custom_user_agent']) . '");' : '') . ($config['text_size'] !== 'NORMAL' ? '
         webSettings.setTextSize(WebSettings.TextSize.' . $config['text_size'] . ');' : '') . ($config['third_party_cookies'] ? '
@@ -1361,14 +1369,14 @@ public class MainActivity extends ' . ($config['file_upload_camera'] || $config[
             @Override
             public void onPageStarted(WebView view, String url, Bitmap favicon) {
                 super.onPageStarted(view, url, favicon);
-                progressBar.setVisibility(View.VISIBLE);' . (in_array($config['loading_style'], ['circular', 'both']) ? '
+                if (progressBar != null) progressBar.setVisibility(View.VISIBLE);' . (in_array($config['loading_style'], ['circular', 'both']) ? '
                 if (progressBarCircular != null) progressBarCircular.setVisibility(View.VISIBLE);' : '') . '
             }
 
             @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
-                progressBar.setVisibility(View.GONE);' . (in_array($config['loading_style'], ['circular', 'both']) ? '
+                if (progressBar != null) progressBar.setVisibility(View.GONE);' . (in_array($config['loading_style'], ['circular', 'both']) ? '
                 if (progressBarCircular != null) progressBarCircular.setVisibility(View.GONE);' : '') . ($config['pull_to_refresh'] ? '
                 swipeRefresh.setRefreshing(false);' : '') . ($config['push_notifications'] ? '
                 // Save cookies for background notification worker
@@ -1398,30 +1406,37 @@ public class MainActivity extends ' . ($config['file_upload_camera'] || $config[
             }
 
             @Override
-            public boolean shouldOverrideUrlLoading(WebView view, String url) {' . ($config['external_links_browser'] ? '
-                try {
-                    java.net.URL baseUrl = new java.net.URL(WEBSITE_URL);
-                    java.net.URL targetUrl = new java.net.URL(url);
-                    if (!targetUrl.getHost().equalsIgnoreCase(baseUrl.getHost())) {
-                        Intent browserIntent = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url));
-                        startActivity(browserIntent);
-                        return true;
-                    }
-                } catch (Exception e) { /* ignore, load in webview */ }' : '') . '
-                view.loadUrl(url);
-                return true;
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                return handleWebViewUrl(view, url);
+            }
+
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, android.webkit.WebResourceRequest request) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && request != null && request.getUrl() != null) {
+                    return handleWebViewUrl(view, request.getUrl().toString());
+                }
+                return false;
             }
         });
 
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onProgressChanged(WebView view, int newProgress) {
-                progressBar.setProgress(newProgress);
+                if (progressBar != null) progressBar.setProgress(newProgress);
             }
             ' . $pushChromeClient . ($config['location_permission'] ? '
             @Override
             public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {
-                callback.invoke(origin, true, false);
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+                    ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+                    ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                    callback.invoke(origin, true, false);
+                } else {
+                    pendingGeoOrigin = origin;
+                    pendingGeoCallback = callback;
+                    ActivityCompat.requestPermissions(MainActivity.this,
+                        new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, 2002);
+                }
             }' : '') . ($config['file_upload_camera'] ? '
             @Override
             public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
@@ -1452,6 +1467,40 @@ public class MainActivity extends ' . ($config['file_upload_camera'] || $config[
         });
 
         ' . $downloadCode . '
+    }
+
+
+    private boolean handleWebViewUrl(WebView view, String url) {
+        if (url == null || url.trim().isEmpty()) return false;
+        String lower = url.toLowerCase();
+        if (lower.startsWith("tel:") || lower.startsWith("mailto:") || lower.startsWith("sms:") || lower.startsWith("smsto:") || lower.startsWith("whatsapp:") || lower.startsWith("market:") || lower.startsWith("intent:")) {
+            try {
+                Intent intent = Intent.parseUri(url, Intent.URI_INTENT_SCHEME);
+                startActivity(intent);
+                return true;
+            } catch (Exception ignored) {
+                try {
+                    startActivity(new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url)));
+                    return true;
+                } catch (Exception ignoredAgain) {
+                    return true;
+                }
+            }
+        }
+        if (!lower.startsWith("http://") && !lower.startsWith("https://")) {
+            return true;
+        }' . ($config['external_links_browser'] ? '
+        try {
+            java.net.URL baseUrl = new java.net.URL(WEBSITE_URL);
+            java.net.URL targetUrl = new java.net.URL(url);
+            if (targetUrl.getHost() != null && !targetUrl.getHost().equalsIgnoreCase(baseUrl.getHost())) {
+                Intent browserIntent = new Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url));
+                startActivity(browserIntent);
+                return true;
+            }
+        } catch (Exception e) { /* ignore, load in webview */ }' : '') . '
+        view.loadUrl(url);
+        return true;
     }
 
     private boolean isNetworkAvailable() {
@@ -1897,7 +1946,28 @@ public class MainActivity extends ' . ($config['file_upload_camera'] || $config[
         }
     }' : '') . '
 
-    @Override
+    ' . ($config['location_permission'] ? '@Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == 2002) {
+            boolean granted = false;
+            if (grantResults != null) {
+                for (int result : grantResults) {
+                    if (result == PackageManager.PERMISSION_GRANTED) {
+                        granted = true;
+                        break;
+                    }
+                }
+            }
+            if (pendingGeoCallback != null) {
+                pendingGeoCallback.invoke(pendingGeoOrigin, granted, false);
+                pendingGeoCallback = null;
+                pendingGeoOrigin = null;
+            }
+        }
+    }
+
+    ' : '') . '@Override
     protected void onDestroy() {
         super.onDestroy();
         if (webView != null) {
@@ -1932,6 +2002,16 @@ public class MainActivity extends ' . ($config['file_upload_camera'] || $config[
         android:max="100"
         android:progressTint="@color/loading_bar_color"
         android:visibility="gone" />';
+    } else {
+        // Keep the progressBar id available because WebView layout and Java code reference it.
+        $progressBarXml .= '
+    <ProgressBar
+        android:id="@+id/progressBar"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_alignParentTop="true"
+        android:visibility="gone" />';
     }
     if ($config['loading_style'] === 'circular' || $config['loading_style'] === 'both') {
         $progressBarXml .= '
@@ -1942,15 +2022,6 @@ public class MainActivity extends ' . ($config['file_upload_camera'] || $config[
         android:layout_height="48dp"
         android:layout_centerInParent="true"
         android:indeterminateTint="@color/loading_bar_color"
-        android:visibility="gone" />';
-    }
-    if ($config['loading_style'] === 'none') {
-        $progressBarXml .= '
-    <ProgressBar
-        android:id="@+id/progressBar"
-        style="?android:attr/progressBarStyleHorizontal"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
         android:visibility="gone" />';
     }
 
@@ -2023,6 +2094,7 @@ public class MainActivity extends ' . ($config['file_upload_camera'] || $config[
         <item name="android:colorAccent">@color/colorAccent</item>
         <item name="android:windowBackground">@color/white</item>
         <item name="android:statusBarColor">@color/status_bar_color</item>
+        <item name="android:navigationBarColor">@color/status_bar_color</item>
     </style>
 
     <style name="SplashTheme" parent="android:Theme.Material.Light.NoActionBar">
@@ -2564,83 +2636,151 @@ zipStorePath=wrapper/dists';
     
     // Copy icons if provided
     if ($config['app_icon_path'] && file_exists($config['app_icon_path'])) {
-        try {
-            // Remove adaptive icon XMLs so PNG icons in mipmap-* dirs take priority on Android 8+
-            @unlink($buildDir . 'app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml');
-            @unlink($buildDir . 'app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml');
-            
-            // Resize icon to proper sizes for each density
-            $iconSizes = [
-                'mipmap-mdpi' => 48,
-                'mipmap-hdpi' => 72,
-                'mipmap-xhdpi' => 96,
-                'mipmap-xxhdpi' => 144,
-                'mipmap-xxxhdpi' => 192,
-            ];
-            
-            $sourceIcon = $config['app_icon_path'];
-            $imageInfo = @getimagesize($sourceIcon);
-            $sourceImage = null;
-            $gdAvailable = function_exists('imagecreatetruecolor');
-            
-            if ($imageInfo && $gdAvailable) {
-                switch ($imageInfo[2]) {
-                    case IMAGETYPE_PNG:
-                        if (function_exists('imagecreatefrompng'))
-                            $sourceImage = @imagecreatefrompng($sourceIcon);
-                        break;
-                    case IMAGETYPE_JPEG:
-                        if (function_exists('imagecreatefromjpeg'))
-                            $sourceImage = @imagecreatefromjpeg($sourceIcon);
-                        break;
-                    case IMAGETYPE_WEBP:
-                        if (function_exists('imagecreatefromwebp'))
-                            $sourceImage = @imagecreatefromwebp($sourceIcon);
-                        break;
-                    case IMAGETYPE_GIF:
-                        if (function_exists('imagecreatefromgif'))
-                            $sourceImage = @imagecreatefromgif($sourceIcon);
-                        break;
-                }
-            }
-            
-            foreach ($iconSizes as $dir => $size) {
-                if ($sourceImage && $gdAvailable) {
-                    $resized = imagecreatetruecolor($size, $size);
-                    // Preserve transparency
-                    imagealphablending($resized, false);
-                    imagesavealpha($resized, true);
-                    $transparent = imagecolorallocatealpha($resized, 0, 0, 0, 127);
-                    imagefilledrectangle($resized, 0, 0, $size, $size, $transparent);
-                    imagecopyresampled($resized, $sourceImage, 0, 0, 0, 0, $size, $size, $imageInfo[0], $imageInfo[1]);
-                    imagepng($resized, $buildDir . 'app/src/main/res/' . $dir . '/ic_launcher.png');
-                    imagepng($resized, $buildDir . 'app/src/main/res/' . $dir . '/ic_launcher_round.png');
-                    imagedestroy($resized);
-                } else {
-                    // Fallback: copy the original file as-is (GitHub Actions workflow will handle it)
-                    copy($sourceIcon, $buildDir . 'app/src/main/res/' . $dir . '/ic_launcher.png');
-                    copy($sourceIcon, $buildDir . 'app/src/main/res/' . $dir . '/ic_launcher_round.png');
-                }
-            }
-            
-            if ($sourceImage) {
-                imagedestroy($sourceImage);
-            }
-        } catch (\Throwable $e) {
-            // Icon processing failed — log it but DON'T crash the whole generation
-            // The GitHub Actions workflow will generate placeholder icons as fallback
-            error_log("Icon processing failed (non-fatal, using placeholder): " . $e->getMessage());
-        }
+        applyLauncherIcon($buildDir, $config['app_icon_path']);
     }
     
     // Copy splash icon if provided
     if ($config['splash_icon_path'] && file_exists($config['splash_icon_path'])) {
-        // Remove vector XML to avoid duplicate resource error
-        @unlink($buildDir . 'app/src/main/res/drawable/splash_logo.xml');
-        copy($config['splash_icon_path'], $buildDir . 'app/src/main/res/drawable/splash_logo.png');
+        applyDrawableImageResource($buildDir . 'app/src/main/res/drawable', 'splash_logo', $config['splash_icon_path']);
     }
     
     return true;
+}
+
+/**
+ * Save uploaded icon/splash files with the correct extension.
+ */
+function saveUploadedImageFile($fieldName, $prefix, $buildId) {
+    if (!isset($_FILES[$fieldName]) || $_FILES[$fieldName]['error'] !== UPLOAD_ERR_OK) {
+        return null;
+    }
+    $tmp = $_FILES[$fieldName]['tmp_name'] ?? '';
+    if (!$tmp || !is_file($tmp)) {
+        return null;
+    }
+    $imageInfo = @getimagesize($tmp);
+    if (!$imageInfo) {
+        error_log("Invalid image upload for $fieldName");
+        return null;
+    }
+    $ext = getAndroidImageExtensionFromType($imageInfo[2] ?? null);
+    if (!$ext) {
+        error_log("Unsupported image type for $fieldName");
+        return null;
+    }
+    if (!is_dir(UPLOAD_DIR)) {
+        @mkdir(UPLOAD_DIR, 0777, true);
+    }
+    $target = UPLOAD_DIR . $prefix . '_' . $buildId . '.' . $ext;
+    if (!@move_uploaded_file($tmp, $target)) {
+        // Useful for CLI/local tests where move_uploaded_file() returns false.
+        if (!@copy($tmp, $target)) {
+            error_log("Failed to save uploaded image $fieldName to $target");
+            return null;
+        }
+    }
+    return $target;
+}
+
+function getAndroidImageExtensionFromType($type) {
+    return match ($type) {
+        IMAGETYPE_PNG => 'png',
+        IMAGETYPE_JPEG => 'jpg',
+        IMAGETYPE_WEBP => 'webp',
+        default => null,
+    };
+}
+
+function getAndroidImageExtension($path) {
+    $imageInfo = @getimagesize($path);
+    return $imageInfo ? getAndroidImageExtensionFromType($imageInfo[2] ?? null) : null;
+}
+
+function loadImageWithGD($path) {
+    $imageInfo = @getimagesize($path);
+    if (!$imageInfo || !function_exists('imagecreatetruecolor')) {
+        return [null, $imageInfo];
+    }
+    $img = null;
+    switch ($imageInfo[2]) {
+        case IMAGETYPE_PNG:
+            if (function_exists('imagecreatefrompng')) $img = @imagecreatefrompng($path);
+            break;
+        case IMAGETYPE_JPEG:
+            if (function_exists('imagecreatefromjpeg')) $img = @imagecreatefromjpeg($path);
+            break;
+        case IMAGETYPE_WEBP:
+            if (function_exists('imagecreatefromwebp')) $img = @imagecreatefromwebp($path);
+            break;
+    }
+    return [$img, $imageInfo];
+}
+
+function removeResourceVariants($dir, $baseName) {
+    foreach (['xml', 'png', 'jpg', 'jpeg', 'webp'] as $ext) {
+        @unlink(rtrim($dir, '/') . '/' . $baseName . '.' . $ext);
+    }
+}
+
+function applyLauncherIcon($buildDir, $sourceIcon) {
+    @unlink($buildDir . 'app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml');
+    @unlink($buildDir . 'app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml');
+
+    $iconSizes = [
+        'mipmap-mdpi' => 48,
+        'mipmap-hdpi' => 72,
+        'mipmap-xhdpi' => 96,
+        'mipmap-xxhdpi' => 144,
+        'mipmap-xxxhdpi' => 192,
+    ];
+
+    [$sourceImage, $imageInfo] = loadImageWithGD($sourceIcon);
+    $sourceExt = getAndroidImageExtension($sourceIcon) ?: 'png';
+
+    foreach ($iconSizes as $dir => $size) {
+        $resDir = $buildDir . 'app/src/main/res/' . $dir;
+        @mkdir($resDir, 0777, true);
+        removeResourceVariants($resDir, 'ic_launcher');
+        removeResourceVariants($resDir, 'ic_launcher_round');
+
+        if ($sourceImage && $imageInfo) {
+            $resized = imagecreatetruecolor($size, $size);
+            imagealphablending($resized, false);
+            imagesavealpha($resized, true);
+            $transparent = imagecolorallocatealpha($resized, 0, 0, 0, 127);
+            imagefilledrectangle($resized, 0, 0, $size, $size, $transparent);
+            imagecopyresampled($resized, $sourceImage, 0, 0, 0, 0, $size, $size, $imageInfo[0], $imageInfo[1]);
+            imagepng($resized, $resDir . '/ic_launcher.png');
+            imagepng($resized, $resDir . '/ic_launcher_round.png');
+            imagedestroy($resized);
+        } else {
+            // If GD is not installed, keep the valid original format instead of saving JPG/WEBP bytes as .png.
+            @copy($sourceIcon, $resDir . '/ic_launcher.' . $sourceExt);
+            @copy($sourceIcon, $resDir . '/ic_launcher_round.' . $sourceExt);
+        }
+    }
+
+    if ($sourceImage) {
+        imagedestroy($sourceImage);
+    }
+}
+
+function applyDrawableImageResource($drawableDir, $baseName, $sourceImagePath) {
+    @mkdir($drawableDir, 0777, true);
+    removeResourceVariants($drawableDir, $baseName);
+
+    [$sourceImage, $imageInfo] = loadImageWithGD($sourceImagePath);
+    if ($sourceImage && $imageInfo) {
+        // Normalize splash/logo drawable to PNG so Android build tools always read it correctly.
+        imagealphablending($sourceImage, true);
+        imagesavealpha($sourceImage, true);
+        imagepng($sourceImage, rtrim($drawableDir, '/') . '/' . $baseName . '.png');
+        imagedestroy($sourceImage);
+        return;
+    }
+
+    $ext = getAndroidImageExtension($sourceImagePath) ?: 'png';
+    @copy($sourceImagePath, rtrim($drawableDir, '/') . '/' . $baseName . '.' . $ext);
 }
 
 /**

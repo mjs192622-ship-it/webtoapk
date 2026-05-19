@@ -1395,7 +1395,7 @@
                 </div>
             </div>
 
-            <form id="apkForm" enctype="multipart/form-data">
+            <form id="apkForm" method="post" enctype="multipart/form-data">
                 <!-- Step 1: Website Info -->
                 <div class="form-section active" data-section="1">
                     <h2 class="section-title">
@@ -1617,7 +1617,7 @@
                                 <h4>App Icon</h4>
                                 <p>512x512 PNG recommended</p>
                             </div>
-                            <input type="file" id="app_icon" name="app_icon" accept="image/png,image/jpeg">
+                            <input type="file" id="app_icon" name="app_icon" accept="image/png,image/jpeg,image/webp">
                         </div>
 
                         <!-- Splash Screen Icon -->
@@ -1629,7 +1629,7 @@
                                 <h4>Splash Screen Icon</h4>
                                 <p>Center icon when app opens</p>
                             </div>
-                            <input type="file" id="splash_icon" name="splash_icon" accept="image/png,image/jpeg">
+                            <input type="file" id="splash_icon" name="splash_icon" accept="image/png,image/jpeg,image/webp">
                         </div>
                     </div>
 
@@ -3070,6 +3070,43 @@
             ).join('') + '<div style="margin-top:10px;font-size:12px;color:#94a3b8;">After downloading, sign with your keystore and build AAB for Play Store submission.</div>';
         }
 
+        function normalizeHexColor(value) {
+            value = (value || '').trim();
+            const shortMatch = value.match(/^#?([0-9a-fA-F]{3})$/);
+            if (shortMatch) {
+                return '#' + shortMatch[1].split('').map(ch => ch + ch).join('').toUpperCase();
+            }
+            const fullMatch = value.match(/^#?([0-9a-fA-F]{6})$/);
+            if (fullMatch) {
+                return '#' + fullMatch[1].toUpperCase();
+            }
+            return null;
+        }
+
+        function syncColorInputsBeforeSubmit() {
+            [
+                ['status_bar_color', 'status_bar_color_text', 'statusBarColorPreview'],
+                ['splash_color', 'splash_color_text', 'splashColorPreview'],
+                ['loading_bar_color', 'loading_bar_color_text', 'loadingBarColorPreview'],
+                ['fab_color', 'fab_color_text', 'fabColorPreview']
+            ].forEach(([colorId, textId, previewId]) => {
+                const colorInput = document.getElementById(colorId);
+                const textInput = document.getElementById(textId);
+                const preview = document.getElementById(previewId);
+                if (!colorInput || !textInput) return;
+
+                const normalized = normalizeHexColor(textInput.value);
+                if (normalized) {
+                    colorInput.value = normalized;
+                    textInput.value = normalized;
+                    if (preview) preview.style.background = normalized;
+                } else {
+                    textInput.value = colorInput.value;
+                    if (preview) preview.style.background = colorInput.value;
+                }
+            });
+        }
+
         // Form Submit
         document.getElementById('apkForm').addEventListener('submit', async function(e) {
             e.preventDefault();
@@ -3107,6 +3144,9 @@
                 progressStatus.textContent = stage.status;
                 progressDetail.textContent = stage.detail;
             }
+
+            // Sync typed color text values into actual color inputs before FormData is created
+            syncColorInputsBeforeSubmit();
 
             // Actually submit the form
             const formData = new FormData(this);

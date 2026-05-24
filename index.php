@@ -2564,12 +2564,13 @@
                             <label class="toggle-label">
                                 <i class="fas fa-cogs"></i>
                                 <div>
-                                    <span>Background / Foreground Service</span>
-                                    <div style="font-size:11px;color:var(--gray);">Run tasks in background, ignore battery optimization</div>
+                                    <span>Native Background Tracking Service</span>
+                                    <div style="font-size:11px;color:var(--gray);">Adds foreground service, always-location, battery unrestricted, autostart bridge</div>
                                 </div>
                             </label>
                             <label class="toggle-switch">
                                 <input type="checkbox" id="foreground_service_permission" name="foreground_service_permission">
+                                <p style="margin:8px 0 0;font-size:11px;color:var(--gray);line-height:1.5;">For employee tracking APK: turn this ON with Location + Notifications. Android 11+ opens App Settings for “Allow all the time”.</p>
                                 <span class="toggle-slider"></span>
                             </label>
                         </div>
@@ -3011,7 +3012,7 @@
             if (document.getElementById('storage_permission').checked) features.push('Full Storage');
             if (document.getElementById('nfc_permission').checked) features.push('NFC');
             if (document.getElementById('body_sensors_permission').checked) features.push('Body Sensors');
-            if (document.getElementById('foreground_service_permission').checked) features.push('Background Service');
+            if (document.getElementById('foreground_service_permission').checked) features.push('Native Background Tracking');
             if (document.getElementById('notification_permission').checked) features.push('Notifications');
 
             const minSdkEl = document.getElementById('min_sdk');

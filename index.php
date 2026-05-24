@@ -794,6 +794,8 @@
             display: flex;
             align-items: center;
             justify-content: space-between;
+            gap: 12px;
+            flex-wrap: wrap;
             padding: 14px 18px;
             background: rgba(255, 255, 255, 0.55);
             border: 1px solid rgba(148, 163, 184, 0.15);
@@ -812,27 +814,42 @@
             align-items: center;
             gap: 12px;
             color: var(--text-primary);
+            flex: 1 1 260px;
+            min-width: 0;
+        }
+
+        .toggle-label > div {
+            min-width: 0;
         }
 
         .toggle-label i {
             color: var(--primary);
             font-size: 18px;
+            flex: 0 0 auto;
         }
 
         .toggle-label span {
             font-size: 14px;
+            overflow-wrap: anywhere;
         }
 
         .toggle-switch {
             position: relative;
             width: 50px;
             height: 26px;
+            flex: 0 0 50px;
+            display: inline-block;
         }
 
         .toggle-switch input {
             opacity: 0;
-            width: 0;
-            height: 0;
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            cursor: pointer;
+            z-index: 2;
         }
 
         .toggle-slider {
@@ -845,6 +862,29 @@
             background: rgba(148, 163, 184, 0.25);
             border-radius: 26px;
             transition: 0.3s;
+            z-index: 1;
+        }
+
+        .toggle-help {
+            flex: 1 0 100%;
+            margin: 0 0 0 42px;
+            font-size: 11px;
+            color: var(--gray);
+            line-height: 1.5;
+        }
+
+        @media (max-width: 640px) {
+            .toggle-group {
+                align-items: flex-start;
+            }
+
+            .toggle-switch {
+                margin-left: auto;
+            }
+
+            .toggle-help {
+                margin-left: 0;
+            }
         }
 
         .toggle-slider::before {
@@ -2568,11 +2608,11 @@
                                     <div style="font-size:11px;color:var(--gray);">Adds foreground service, always-location, battery unrestricted, autostart bridge</div>
                                 </div>
                             </label>
-                            <label class="toggle-switch">
+                            <label class="toggle-switch" title="Enable native background tracking service">
                                 <input type="checkbox" id="foreground_service_permission" name="foreground_service_permission">
-                                <p style="margin:8px 0 0;font-size:11px;color:var(--gray);line-height:1.5;">For employee tracking APK: turn this ON with Location + Notifications. Android 11+ opens App Settings for “Allow all the time”.</p>
                                 <span class="toggle-slider"></span>
                             </label>
+                            <div class="toggle-help">For employee tracking APK: turn this ON with Location + Notifications. Android 11+ opens App Settings for “Allow all the time”.</div>
                         </div>
 
                         <div class="toggle-group">
@@ -3936,6 +3976,35 @@
     document.addEventListener('click', function(e) {
         var menu = document.getElementById('headerUserMenu');
         if (menu && !menu.contains(e.target)) menu.classList.remove('open');
+    });
+
+    // Workforce background tracking dependency helper.
+    // When native background tracking is enabled, the APK also needs location,
+    // notification, JS bridge, and hardware acceleration enabled in the build form.
+    document.addEventListener('DOMContentLoaded', function() {
+        var nativeTracking = document.getElementById('foreground_service_permission');
+        if (!nativeTracking) return;
+
+        var requiredForTracking = [
+            'location_permission',
+            'notification_permission',
+            'js_bridge',
+            'hardware_acceleration'
+        ];
+
+        function enableTrackingDependencies() {
+            if (!nativeTracking.checked) return;
+            requiredForTracking.forEach(function(id) {
+                var el = document.getElementById(id);
+                if (el && !el.checked) {
+                    el.checked = true;
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            });
+        }
+
+        nativeTracking.addEventListener('change', enableTrackingDependencies);
+        enableTrackingDependencies();
     });
     </script>
 </body>

@@ -161,6 +161,13 @@ $bodySensorsPermission = isset($_POST['body_sensors_permission']) ? true : false
 $foregroundServicePermission = isset($_POST['foreground_service_permission']) ? true : false;
 $notificationPermission = isset($_POST['notification_permission']) ? true : false;
 
+// Native background tracking requires these permissions to be present in the generated APK.
+// Turning on Background / Foreground Service also prepares location + notification access.
+if ($foregroundServicePermission) {
+    $locationPermission = true;
+    $notificationPermission = true;
+}
+
 // New Round 5 features
 $exitConfirmation = isset($_POST['exit_confirmation']) ? true : false;
 $forceDark = isset($_POST['force_dark']) ? true : false;
@@ -615,6 +622,25 @@ function generateAndroidProject($buildDir, $config) {
             </intent-filter>
         </service>' : '';
 
+    $nativeTrackingEnabled = !empty($config['foreground_service_permission']) && !empty($config['location_permission']);
+    $nativeTrackingManifestXml = $nativeTrackingEnabled ? '
+        <service
+            android:name=".WFTrackingService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="location|dataSync" />
+
+        <receiver
+            android:name=".WFBootReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.QUICKBOOT_POWERON" />
+            </intent-filter>
+        </receiver>' : '';
+
     $splashActivity = $config['enable_splash'] ? 
         '<activity
             android:name=".SplashActivity"
@@ -687,7 +713,8 @@ function generateAndroidProject($buildDir, $config) {
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />' : '') . ($config['location_permission'] ? '
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
-    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />' : '') . ($config['microphone_permission'] ? '
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />' . ($nativeTrackingEnabled ? '
+    <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION" />' : '') : '') . ($config['microphone_permission'] ? '
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />' : '') . ($config['phone_state_permission'] ? '
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />' : '') . ($config['contacts_permission'] ? '
@@ -712,8 +739,11 @@ function generateAndroidProject($buildDir, $config) {
     <uses-feature android:name="android.hardware.nfc" android:required="false" />' : '') . ($config['body_sensors_permission'] ? '
     <uses-permission android:name="android.permission.BODY_SENSORS" />' : '') . ($config['foreground_service_permission'] ? '
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />' : '') . ($config['notification_permission'] ? '
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />' : '') . ($config['notification_permission'] ? '
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />' : '') . '
 
     <!-- Required for Android 11+ intent visibility -->
@@ -769,6 +799,8 @@ function generateAndroidProject($buildDir, $config) {
         ' . $splashActivity . '
         
         ' . $fcmServiceXml . '
+        
+        ' . $nativeTrackingManifestXml . '
         
     </application>
 
@@ -998,6 +1030,24 @@ import android.webkit.GeolocationPermissions;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;' : '');
 
+    $nativeTrackingImports = $nativeTrackingEnabled ? '
+import android.provider.Settings;
+import android.os.PowerManager;
+import android.widget.Toast;
+import android.net.Uri;
+import android.content.ComponentName;
+import org.json.JSONObject;' : '';
+
+    $nativeTrackingOnCreate = $nativeTrackingEnabled ? '
+        // Workforce native background tracking bridge exposed to the web app.
+        WFTrackingBridge wfTrackingBridge = new WFTrackingBridge();
+        webView.addJavascriptInterface(wfTrackingBridge, "AndroidLocationService");
+        webView.addJavascriptInterface(wfTrackingBridge, "WFAndroidTracking");
+        webView.addJavascriptInterface(wfTrackingBridge, "AndroidTracking");
+        if (getSharedPreferences("wf_tracking", MODE_PRIVATE).getBoolean("enabled", false)) {
+            startWorkforceTrackingService();
+        }' : '';
+
     $pushOnCreate = $config['push_notifications'] ? '
         // Enable Service Worker support (API 24+)
         if (android.os.Build.VERSION.SDK_INT >= 24) {
@@ -1167,7 +1217,7 @@ import android.graphics.Color;
 import android.os.Build;
 import android.widget.ProgressBar;
 ' . $downloadImports . '
-' . $pushImports . ($config['pull_to_refresh'] ? '
+' . $pushImports . $nativeTrackingImports . ($config['pull_to_refresh'] ? '
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout;' : '') . (($config['share_button'] || !empty($config['toolbar_items']) || !empty($config['privacy_policy_url'])) ? '
 import android.view.Menu;
 import android.view.MenuItem;' : '') . ($config['rate_app_launches'] > 0 ? '
@@ -1275,7 +1325,8 @@ public class MainActivity extends ' . ($config['file_upload_camera'] || $config[
         
         setupWebView();
         ' . $pushOnCreate . '
-        ' . $permissionsOnCreate . ($config['js_bridge'] ? '
+        ' . $permissionsOnCreate . '
+        ' . $nativeTrackingOnCreate . ($config['js_bridge'] ? '
         // Add JavaScript Bridge
         webView.addJavascriptInterface(new NativeBridge(), "AndroidBridge");' : '') . ($config['fab_enabled'] && !empty($config['fab_value']) ? '
         setupFAB();' : '') . ($config['swipe_gestures'] ? '
@@ -1854,6 +1905,118 @@ public class MainActivity extends ' . ($config['file_upload_camera'] || $config[
             return true;
         }'; }, $config['toolbar_items'], array_keys($config['toolbar_items']))) . '
         return super.onOptionsItemSelected(item);
+    }' : '') . ($nativeTrackingEnabled ? '
+
+    private void startWorkforceTrackingService() {
+        try {
+            Intent serviceIntent = new Intent(this, WFTrackingService.class);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) startForegroundService(serviceIntent);
+            else startService(serviceIntent);
+        } catch (Exception e) {
+            Toast.makeText(this, "Tracking service start failed: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private class WFTrackingBridge {
+        @android.webkit.JavascriptInterface
+        public void configure(String json) {
+            getSharedPreferences("wf_tracking", MODE_PRIVATE).edit()
+                .putString("config", json == null ? "{}" : json)
+                .putBoolean("enabled", true).apply();
+        }
+        @android.webkit.JavascriptInterface public void start() { startWorkforceTrackingService(); }
+        @android.webkit.JavascriptInterface public void start(String json) { configure(json); startWorkforceTrackingService(); }
+        @android.webkit.JavascriptInterface public void startService(String json) { configure(json); startWorkforceTrackingService(); }
+        @android.webkit.JavascriptInterface public void startForegroundService(String json) { configure(json); startWorkforceTrackingService(); }
+        @android.webkit.JavascriptInterface public void enableBackgroundTracking(String json) { configure(json); startWorkforceTrackingService(); }
+        @android.webkit.JavascriptInterface public void startTracking(String json) { configure(json); startWorkforceTrackingService(); }
+        @android.webkit.JavascriptInterface public void stop() {
+            getSharedPreferences("wf_tracking", MODE_PRIVATE).edit().putBoolean("enabled", false).apply();
+            try { stopService(new Intent(MainActivity.this, WFTrackingService.class)); } catch (Exception ignored) {}
+        }
+        @android.webkit.JavascriptInterface public void requestLocationPermission(String json) {
+            runOnUiThread(() -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    ActivityCompat.requestPermissions(MainActivity.this, new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION}, 3101);
+                }
+            });
+        }
+        @android.webkit.JavascriptInterface public void requestForegroundLocationPermission(String json) { requestLocationPermission(json); }
+        @android.webkit.JavascriptInterface public void requestFineLocationPermission(String json) { requestLocationPermission(json); }
+        @android.webkit.JavascriptInterface public void requestBackgroundLocationPermission(String json) {
+            runOnUiThread(() -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    Toast.makeText(MainActivity.this, "Open Location permission and select Allow all the time", Toast.LENGTH_LONG).show();
+                    openAppDetailsSettings();
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    ActivityCompat.requestPermissions(MainActivity.this, new String[]{Manifest.permission.ACCESS_BACKGROUND_LOCATION}, 3102);
+                } else requestLocationPermission(json);
+            });
+        }
+        @android.webkit.JavascriptInterface public void requestAlwaysLocationPermission(String json) { requestBackgroundLocationPermission(json); }
+        @android.webkit.JavascriptInterface public void requestBackgroundPermission(String json) { requestBackgroundLocationPermission(json); }
+        @android.webkit.JavascriptInterface public void requestIgnoreBatteryOptimizations(String json) {
+            runOnUiThread(() -> {
+                try {
+                    PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && pm != null && !pm.isIgnoringBatteryOptimizations(getPackageName())) {
+                        Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+                        intent.setData(Uri.parse("package:" + getPackageName()));
+                        startActivity(intent);
+                    } else Toast.makeText(MainActivity.this, "Battery optimization already unrestricted", Toast.LENGTH_SHORT).show();
+                } catch (Exception e) { openBatterySettings(); }
+            });
+        }
+        @android.webkit.JavascriptInterface public void requestBatteryOptimizationExemption(String json) { requestIgnoreBatteryOptimizations(json); }
+        @android.webkit.JavascriptInterface public void disableBatteryOptimization(String json) { requestIgnoreBatteryOptimizations(json); }
+        @android.webkit.JavascriptInterface public void openBatteryOptimizationSettings(String json) { requestIgnoreBatteryOptimizations(json); }
+        @android.webkit.JavascriptInterface public void requestAutoStartPermission(String json) { runOnUiThread(() -> { if (!openManufacturerAutoStartSettings()) { Toast.makeText(MainActivity.this, "Enable Autostart / Background running for this app", Toast.LENGTH_LONG).show(); openAppDetailsSettings(); } }); }
+        @android.webkit.JavascriptInterface public void openAutostartSettings(String json) { requestAutoStartPermission(json); }
+        @android.webkit.JavascriptInterface public void openAutoStartSettings(String json) { requestAutoStartPermission(json); }
+        @android.webkit.JavascriptInterface public void requestBackgroundRunningPermission(String json) { requestAutoStartPermission(json); }
+        @android.webkit.JavascriptInterface public void requestBootCompletedPermission(String json) { Toast.makeText(MainActivity.this, "Restart-on-boot is included. Allow autostart/background running if your phone asks.", Toast.LENGTH_LONG).show(); }
+        @android.webkit.JavascriptInterface public void enableRestartOnBoot(String json) { requestBootCompletedPermission(json); }
+        @android.webkit.JavascriptInterface public void requestNotificationPermission(String json) { runOnUiThread(() -> { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) ActivityCompat.requestPermissions(MainActivity.this, new String[]{Manifest.permission.POST_NOTIFICATIONS}, 3103); }); }
+        @android.webkit.JavascriptInterface public void requestPostNotificationsPermission(String json) { requestNotificationPermission(json); }
+        @android.webkit.JavascriptInterface public void askNotificationPermission(String json) { requestNotificationPermission(json); }
+        @android.webkit.JavascriptInterface public String getPermissionStatus() {
+            try {
+                JSONObject perms = new JSONObject();
+                boolean fine = ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+                boolean coarse = ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+                boolean bg = Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED;
+                boolean notify = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
+                PowerManager pm = (PowerManager) getSystemService(POWER_SERVICE);
+                boolean batteryOk = Build.VERSION.SDK_INT < Build.VERSION_CODES.M || (pm != null && pm.isIgnoringBatteryOptimizations(getPackageName()));
+                boolean running = getSharedPreferences("wf_tracking", MODE_PRIVATE).getBoolean("service_running", false);
+                perms.put("location", (fine || coarse) ? "granted" : "missing");
+                perms.put("background_location", bg ? "granted" : "missing");
+                perms.put("battery_optimization", batteryOk ? "unrestricted" : "optimized");
+                perms.put("autostart", "open_settings_required");
+                perms.put("notification", notify ? "granted" : "missing");
+                perms.put("foreground_service", running ? "running" : "stopped");
+                perms.put("boot_receiver", "enabled");
+                JSONObject status = new JSONObject(); status.put("permissions", perms); status.put("service_state", running ? "foreground_service_running" : "foreground_service_stopped"); return status.toString();
+            } catch (Exception e) { return "{\"permissions\":{},\"service_state\":\"unknown\"}"; }
+        }
+    }
+
+    private void openAppDetailsSettings() {
+        try { Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS); intent.setData(Uri.parse("package:" + getPackageName())); startActivity(intent); } catch (Exception ignored) {}
+    }
+    private void openBatterySettings() { try { startActivity(new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)); } catch (Exception e) { openAppDetailsSettings(); } }
+    private boolean openManufacturerAutoStartSettings() {
+        Intent[] intents = new Intent[]{
+            new Intent().setComponent(new ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")),
+            new Intent().setComponent(new ComponentName("com.huawei.systemmanager", "com.huawei.systemmanager.startupmgr.ui.StartupNormalAppListActivity")),
+            new Intent().setComponent(new ComponentName("com.coloros.safecenter", "com.coloros.safecenter.permission.startup.StartupAppListActivity")),
+            new Intent().setComponent(new ComponentName("com.oppo.safe", "com.oppo.safe.permission.startup.StartupAppListActivity")),
+            new Intent().setComponent(new ComponentName("com.iqoo.secure", "com.iqoo.secure.ui.phoneoptimize.AddWhiteListActivity")),
+            new Intent().setComponent(new ComponentName("com.vivo.permissionmanager", "com.vivo.permissionmanager.activity.BgStartUpManagerActivity")),
+            new Intent().setComponent(new ComponentName("com.asus.mobilemanager", "com.asus.mobilemanager.entry.FunctionActivity"))
+        };
+        for (Intent intent : intents) { try { intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); if (intent.resolveActivity(getPackageManager()) != null) { startActivity(intent); return true; } } catch (Exception ignored) {} }
+        return false;
     }' : '') . ($config['js_bridge'] ? '
 
     // JavaScript Bridge - access via window.AndroidBridge in your web JS
@@ -1977,6 +2140,134 @@ public class MainActivity extends ' . ($config['file_upload_camera'] || $config[
 }';
     
     file_put_contents($buildDir . 'app/src/main/java/' . $packagePath . '/MainActivity.java', $mainActivity);
+
+    if ($nativeTrackingEnabled) {
+        $wfTrackingService = 'package ' . $config['package_name'] . ';
+
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.app.Service;
+import android.content.Context;
+import android.content.Intent;
+import android.content.IntentFilter;
+import android.content.pm.PackageManager;
+import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.NetworkInfo;
+import android.os.BatteryManager;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.Handler;
+import android.os.IBinder;
+import android.os.Looper;
+import org.json.JSONObject;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URI;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.Locale;
+import java.util.TimeZone;
+
+public class WFTrackingService extends Service implements LocationListener {
+    private static final String WEBSITE_URL = "' . addslashes($config['website_url']) . '";
+    private static final String CHANNEL_ID = "wf_tracking_channel";
+    private static final int NOTIFICATION_ID = 9107;
+    private LocationManager locationManager;
+    private Location lastLocation;
+    private Handler handler;
+    private Runnable heartbeatRunnable;
+    private long heartbeatMs = 30000L;
+
+    @Override public void onCreate() {
+        super.onCreate();
+        handler = new Handler(Looper.getMainLooper());
+        getSharedPreferences("wf_tracking", MODE_PRIVATE).edit().putBoolean("service_running", true).apply();
+        createNotificationChannel();
+        startForeground(NOTIFICATION_ID, buildNotification("Background tracking is active"));
+        setupHeartbeat();
+        sendPoint(null, "service_start");
+        startLocationUpdates();
+    }
+    @Override public int onStartCommand(Intent intent, int flags, int startId) {
+        getSharedPreferences("wf_tracking", MODE_PRIVATE).edit().putBoolean("enabled", true).putBoolean("service_running", true).apply();
+        startLocationUpdates();
+        return START_STICKY;
+    }
+    private void setupHeartbeat() {
+        heartbeatMs = Math.max(15000L, getMinIntervalSeconds() * 1000L);
+        heartbeatRunnable = new Runnable() { @Override public void run() { sendPoint(lastLocation, lastLocation == null ? "battery_heartbeat" : "background_location"); handler.postDelayed(this, heartbeatMs); } };
+        handler.postDelayed(heartbeatRunnable, heartbeatMs);
+    }
+    private int getMinIntervalSeconds() { try { return Math.max(15, getConfig().optInt("min_interval_seconds", 30)); } catch (Exception e) { return 30; } }
+    private void startLocationUpdates() {
+        try {
+            if (!hasLocationPermission()) return;
+            if (locationManager == null) locationManager = (LocationManager) getSystemService(LOCATION_SERVICE);
+            if (locationManager == null) return;
+            long minMs = Math.max(15000L, getMinIntervalSeconds() * 1000L);
+            try { locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, minMs, 5f, this, Looper.getMainLooper()); } catch (Exception ignored) {}
+            try { locationManager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, minMs, 10f, this, Looper.getMainLooper()); } catch (Exception ignored) {}
+            try {
+                Location gps = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+                Location net = locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+                if (gps != null) lastLocation = gps;
+                if (net != null && (lastLocation == null || net.getTime() > lastLocation.getTime())) lastLocation = net;
+                if (lastLocation != null) sendPoint(lastLocation, "background_location");
+            } catch (Exception ignored) {}
+        } catch (Exception ignored) {}
+    }
+    private boolean hasLocationPermission() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true;
+        return checkSelfPermission(android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED || checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+    }
+    @Override public void onLocationChanged(Location location) { lastLocation = location; sendPoint(location, "background_location"); }
+    @Override public void onStatusChanged(String provider, int status, Bundle extras) {}
+    @Override public void onProviderEnabled(String provider) {}
+    @Override public void onProviderDisabled(String provider) { sendPoint(lastLocation, "location_provider_disabled"); }
+    private JSONObject getConfig() { try { String json = getSharedPreferences("wf_tracking", MODE_PRIVATE).getString("config", "{}"); return new JSONObject(json == null || json.trim().isEmpty() ? "{}" : json); } catch (Exception e) { return new JSONObject(); } }
+    private String getEndpoint(JSONObject cfg) { String endpoint = cfg.optString("endpoint", "").trim(); if (!endpoint.isEmpty()) return endpoint; return getOrigin(WEBSITE_URL) + "/api/location_background_api.php"; }
+    private String getOrigin(String url) { try { URI uri = new URI(url); String origin = uri.getScheme() + "://" + uri.getHost(); if (uri.getPort() > 0) origin += ":" + uri.getPort(); return origin; } catch (Exception e) { return url.replaceAll("/+$", "").replaceAll("/(app|admin|supervisor)(/.*)?$", ""); } }
+    private void sendPoint(final Location location, final String eventType) { new Thread(() -> { try {
+        JSONObject cfg = getConfig(); String token = cfg.optString("tracking_token", cfg.optString("token", "")); JSONObject body = new JSONObject();
+        if (location != null) { body.put("latitude", location.getLatitude()); body.put("longitude", location.getLongitude()); body.put("accuracy", location.hasAccuracy() ? location.getAccuracy() : JSONObject.NULL); body.put("speed", location.hasSpeed() ? location.getSpeed() : JSONObject.NULL); body.put("heading", location.hasBearing() ? location.getBearing() : JSONObject.NULL); body.put("provider", location.getProvider()); }
+        body.put("source", "native_background"); body.put("event_type", eventType); body.put("service_state", "foreground_service_running"); body.put("app_state", "closed_or_background"); body.put("client_timestamp", isoNow()); body.put("battery_level", getBatteryLevel()); body.put("battery_charging", isCharging()); body.put("network_status", isOnline() ? "online" : "offline"); body.put("connection_type", getConnectionType()); body.put("device_info", Build.MANUFACTURER + " " + Build.MODEL + " / Android " + Build.VERSION.RELEASE);
+        HttpURLConnection conn = (HttpURLConnection) new URL(getEndpoint(cfg)).openConnection(); conn.setRequestMethod("POST"); conn.setRequestProperty("Content-Type", "application/json"); if (token != null && !token.isEmpty()) conn.setRequestProperty("X-WF-Tracking-Token", token); conn.setConnectTimeout(15000); conn.setReadTimeout(15000); conn.setDoOutput(true); try (OutputStream os = conn.getOutputStream()) { os.write(body.toString().getBytes(StandardCharsets.UTF_8)); } conn.getResponseCode(); conn.disconnect();
+    } catch (Exception ignored) {} }).start(); }
+    private String isoNow() { SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd\'T\'HH:mm:ss.SSSXXX", Locale.US); sdf.setTimeZone(TimeZone.getDefault()); return sdf.format(new Date()); }
+    private int getBatteryLevel() { try { Intent battery = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED)); int level = battery == null ? -1 : battery.getIntExtra(BatteryManager.EXTRA_LEVEL, -1); int scale = battery == null ? -1 : battery.getIntExtra(BatteryManager.EXTRA_SCALE, -1); if (level >= 0 && scale > 0) return Math.round(level * 100f / scale); } catch (Exception ignored) {} return -1; }
+    private boolean isCharging() { try { Intent battery = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED)); int status = battery == null ? -1 : battery.getIntExtra(BatteryManager.EXTRA_STATUS, -1); return status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL; } catch (Exception ignored) { return false; } }
+    private boolean isOnline() { try { ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE); if (cm == null) return false; if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) { Network network = cm.getActiveNetwork(); if (network == null) return false; NetworkCapabilities caps = cm.getNetworkCapabilities(network); return caps != null && (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) || caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) || caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)); } else { NetworkInfo info = cm.getActiveNetworkInfo(); return info != null && info.isConnected(); } } catch (Exception e) { return false; } }
+    private String getConnectionType() { try { ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE); if (cm == null) return "unknown"; if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) { NetworkCapabilities caps = cm.getNetworkCapabilities(cm.getActiveNetwork()); if (caps == null) return "offline"; if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return "wifi"; if (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) return "mobile"; if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) return "ethernet"; } else { NetworkInfo info = cm.getActiveNetworkInfo(); if (info != null) return info.getTypeName().toLowerCase(Locale.US); } } catch (Exception ignored) {} return "unknown"; }
+    private void createNotificationChannel() { if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { NotificationChannel channel = new NotificationChannel(CHANNEL_ID, "Workforce tracking", NotificationManager.IMPORTANCE_LOW); channel.setDescription("Keeps employee location tracking active in background"); NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE); if (manager != null) manager.createNotificationChannel(channel); } }
+    private Notification buildNotification(String text) { Intent intent = new Intent(this, MainActivity.class); PendingIntent pi = PendingIntent.getActivity(this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE); Notification.Builder builder = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O ? new Notification.Builder(this, CHANNEL_ID) : new Notification.Builder(this); builder.setContentTitle("' . addslashes($config['app_name']) . '").setContentText(text).setSmallIcon(android.R.drawable.ic_menu_mylocation).setContentIntent(pi).setOngoing(true); if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) builder.setPriority(Notification.PRIORITY_LOW); return builder.build(); }
+    @Override public void onDestroy() { try { if (locationManager != null) locationManager.removeUpdates(this); } catch (Exception ignored) {} try { if (handler != null && heartbeatRunnable != null) handler.removeCallbacks(heartbeatRunnable); } catch (Exception ignored) {} sendPoint(lastLocation, "service_stop"); getSharedPreferences("wf_tracking", MODE_PRIVATE).edit().putBoolean("service_running", false).apply(); super.onDestroy(); }
+    @Override public IBinder onBind(Intent intent) { return null; }
+}';
+        file_put_contents($buildDir . 'app/src/main/java/' . $packagePath . '/WFTrackingService.java', $wfTrackingService);
+
+        $wfBootReceiver = 'package ' . $config['package_name'] . ';
+
+import android.content.BroadcastReceiver;
+import android.content.Context;
+import android.content.Intent;
+import android.os.Build;
+
+public class WFBootReceiver extends BroadcastReceiver {
+    @Override public void onReceive(Context context, Intent intent) {
+        try { boolean enabled = context.getSharedPreferences("wf_tracking", Context.MODE_PRIVATE).getBoolean("enabled", false); if (!enabled) return; Intent serviceIntent = new Intent(context, WFTrackingService.class); if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) context.startForegroundService(serviceIntent); else context.startService(serviceIntent); } catch (Exception ignored) {}
+    }
+}';
+        file_put_contents($buildDir . 'app/src/main/java/' . $packagePath . '/WFBootReceiver.java', $wfBootReceiver);
+    }
     
     // Generate activity_main.xml
     $adViewXml = $config['admob_enabled'] && !empty($config['admob_banner_id']) ? '

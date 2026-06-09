@@ -2812,6 +2812,88 @@
     <script>
         let currentStep = 1;
         let downloadUrl = '';
+        const LAST_BUILD_KEY = 'webtoapk_last_build_v2';
+
+        function rememberBuildState(state) {
+            try {
+                if (!state || !state.build_id) return;
+                const saved = {
+                    build_id: state.build_id,
+                    type: state.type || 'github',
+                    app_name: state.app_name || document.getElementById('app_name')?.value || 'Generated App',
+                    download_url: state.download_url || '',
+                    source_url: state.source_url || state.download_url || '',
+                    apk_download_url: state.apk_download_url || '',
+                    actions_url: state.actions_url || '',
+                    releases_url: state.releases_url || '',
+                    github_url: state.github_url || '',
+                    saved_at: Date.now()
+                };
+                localStorage.setItem(LAST_BUILD_KEY, JSON.stringify(saved));
+            } catch (e) {
+                console.warn('Could not save build state', e);
+            }
+        }
+
+        function getRememberedBuildState() {
+            try {
+                const raw = localStorage.getItem(LAST_BUILD_KEY);
+                if (!raw) return null;
+                const saved = JSON.parse(raw);
+                if (!saved || !saved.build_id) return null;
+                // Keep resumable build cards for 7 days.
+                if (saved.saved_at && Date.now() - saved.saved_at > 7 * 24 * 60 * 60 * 1000) {
+                    localStorage.removeItem(LAST_BUILD_KEY);
+                    return null;
+                }
+                return saved;
+            } catch (e) {
+                localStorage.removeItem(LAST_BUILD_KEY);
+                return null;
+            }
+        }
+
+        function showResultShell(appName) {
+            document.querySelectorAll('.form-section').forEach(s => s.classList.remove('active'));
+            document.querySelector('.steps').style.display = 'none';
+            document.getElementById('progressSection').classList.remove('active');
+            document.getElementById('resultSection').classList.add('active');
+            document.getElementById('downloadAppName').textContent = appName || 'Generated App';
+            const downloadCard = document.querySelector('.download-card');
+            const existingExtras = downloadCard.querySelectorAll('button:not(#downloadBtn), .status-box, .build-progress-box');
+            existingExtras.forEach(el => el.remove());
+        }
+
+        function resumeRememberedBuild() {
+            const saved = getRememberedBuildState();
+            if (!saved || document.getElementById('resultSection').classList.contains('active')) return;
+            showResultShell(saved.app_name);
+            if (saved.type === 'github') {
+                const actionsUrl = saved.actions_url || (saved.github_url ? saved.github_url + '/actions' : '#');
+                const releasesUrl = saved.releases_url || (saved.github_url ? saved.github_url + '/releases' : '#');
+                showGitHubBuildStatus(saved.build_id, actionsUrl, releasesUrl, saved.source_url || saved.download_url);
+            } else if (saved.type === 'local_build') {
+                showLocalBuildStatus(saved.build_id, saved.source_url || saved.download_url);
+            } else if (saved.type === 'apk' && (saved.apk_download_url || saved.download_url)) {
+                document.getElementById('downloadAppInfo').textContent = 'Android APK • Ready to install';
+                document.getElementById('downloadBtn').innerHTML = '<i class="fas fa-download"></i> Download APK';
+                document.getElementById('downloadBtn').disabled = false;
+                document.getElementById('downloadBtn').style.opacity = '1';
+                document.getElementById('downloadBtn').style.cursor = 'pointer';
+                document.getElementById('downloadBtn').onclick = () => window.open(saved.apk_download_url || saved.download_url, '_blank');
+            } else if (saved.download_url) {
+                document.getElementById('downloadAppInfo').textContent = 'Android Project • Build in Android Studio';
+                document.getElementById('downloadBtn').innerHTML = '<i class="fas fa-download"></i> Download Project ZIP';
+                document.getElementById('downloadBtn').disabled = false;
+                document.getElementById('downloadBtn').onclick = () => window.location.href = saved.download_url;
+            }
+        }
+
+        function runWhenReady(fn) {
+            if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fn);
+            else fn();
+        }
+        runWhenReady(resumeRememberedBuild);
 
         // Step Navigation
         function nextStep(step) {
@@ -3210,6 +3292,17 @@
                     downloadUrl = data.download_url;
                     const appName = document.getElementById('app_name').value;
                     document.getElementById('downloadAppName').textContent = appName;
+                    rememberBuildState({
+                        build_id: data.build_id,
+                        type: data.type,
+                        app_name: appName,
+                        download_url: data.download_url,
+                        source_url: data.source_url || data.download_url,
+                        actions_url: data.actions_url,
+                        releases_url: data.releases_url,
+                        github_url: data.github_url,
+                        apk_download_url: data.type === 'apk' ? data.download_url : ''
+                    });
                     
                     // Check if APK was built or just source code
                     if (data.type === 'apk') {
@@ -3293,6 +3386,7 @@
         
         function showLocalBuildStatus(buildId, sourceUrl) {
             currentBuildId = buildId;
+            rememberBuildState({ build_id: buildId, type: 'local_build', source_url: sourceUrl, download_url: sourceUrl, app_name: document.getElementById('downloadAppName').textContent });
             
             document.getElementById('downloadAppInfo').innerHTML = `
                 <span style="color: #f59e0b;"><i class="fas fa-hammer"></i> Building APK...</span><br>
@@ -3432,6 +3526,7 @@
                     dlBtn.style.cursor = 'pointer';
                     dlBtn.style.background = 'linear-gradient(135deg, #10b981, #059669)';
                     dlBtn.onclick = () => window.location.href = data.apk_download_url;
+                    rememberBuildState({ build_id: buildId, type: 'apk', app_name: document.getElementById('downloadAppName').textContent, download_url: data.apk_download_url, apk_download_url: data.apk_download_url, source_url: sourceUrl });
                     
                     // Update progress box
                     if (progressBox) {
@@ -3503,6 +3598,7 @@
         
         function showGitHubBuildStatus(buildId, actionsUrl, releasesUrl, sourceUrl) {
             currentBuildId = buildId;
+            rememberBuildState({ build_id: buildId, type: 'github', actions_url: actionsUrl, releases_url: releasesUrl, source_url: sourceUrl, download_url: sourceUrl, app_name: document.getElementById('downloadAppName').textContent });
             
             // Initial UI setup
             document.getElementById('downloadAppInfo').innerHTML = `
@@ -3636,6 +3732,16 @@
                     document.getElementById('downloadBtn').innerHTML = '<i class="fas fa-download"></i> Download APK';
                     document.getElementById('downloadBtn').onclick = () => window.open(data.apk_download_url, '_blank');
                     document.getElementById('downloadBtn').style.background = 'linear-gradient(135deg, #10b981, #059669)';
+                    rememberBuildState({
+                        build_id: buildId,
+                        type: 'apk',
+                        app_name: document.getElementById('downloadAppName').textContent,
+                        download_url: data.apk_download_url,
+                        apk_download_url: data.apk_download_url,
+                        source_url: sourceUrl,
+                        actions_url: actionsUrl,
+                        releases_url: releasesUrl
+                    });
                     
                     // Update status box
                     if (statusBox) {

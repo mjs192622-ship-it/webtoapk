@@ -605,6 +605,52 @@ function generateAndroidProject($buildDir, $config) {
     foreach ($dirs as $dir) {
         mkdir($buildDir . $dir, 0777, true);
     }
+
+    // Launcher icon: embed a safe drawable inside the generated Android project.
+    // This removes GitHub Actions dependency on ImageMagick/base64 icon conversion and prevents build failures.
+    $launcherIconResource = '@drawable/app_icon';
+    $customIconApplied = false;
+    $iconSourcePath = $config['app_icon_path'] ?? '';
+    if (!empty($iconSourcePath) && file_exists($iconSourcePath)) {
+        $targetExt = '';
+        $sourceExt = strtolower(pathinfo($iconSourcePath, PATHINFO_EXTENSION));
+        if (in_array($sourceExt, ['png', 'webp'], true)) {
+            $targetExt = $sourceExt;
+        } elseif (in_array($sourceExt, ['jpg', 'jpeg'], true)) {
+            $targetExt = 'jpg';
+        }
+
+        if ($targetExt === '' && function_exists('getimagesize')) {
+            $imageInfo = @getimagesize($iconSourcePath);
+            if (!empty($imageInfo[2])) {
+                if ($imageInfo[2] === IMAGETYPE_PNG) $targetExt = 'png';
+                elseif ($imageInfo[2] === IMAGETYPE_JPEG) $targetExt = 'jpg';
+                elseif (defined('IMAGETYPE_WEBP') && $imageInfo[2] === IMAGETYPE_WEBP) $targetExt = 'webp';
+            }
+        }
+
+        if ($targetExt !== '') {
+            $iconTargetPath = $buildDir . 'app/src/main/res/drawable/app_icon.' . $targetExt;
+            if (@copy($iconSourcePath, $iconTargetPath) && file_exists($iconTargetPath) && filesize($iconTargetPath) > 0) {
+                $customIconApplied = true;
+            }
+        }
+    }
+
+    if (!$customIconApplied) {
+        $defaultLauncherIcon = '<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path android:fillColor="#4f46e5" android:pathData="M0,0h108v108h-108z"/>
+    <path android:fillColor="#ffffff" android:pathData="M24,24h60v60h-60z"/>
+    <path android:fillColor="#4f46e5" android:pathData="M32,32h44v44h-44z"/>
+    <path android:fillColor="#ffffff" android:pathData="M49,36h10v36h-10zM36,49h36v10h-36z"/>
+</vector>';
+        file_put_contents($buildDir . 'app/src/main/res/drawable/app_icon.xml', $defaultLauncherIcon);
+    }
     
     // Generate AndroidManifest.xml
     $orientationValue = match($config['orientation']) {
@@ -743,7 +789,7 @@ function generateAndroidProject($buildDir, $config) {
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
-    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />' : '') . ($config['notification_permission'] ? '
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />' : '') . ((!$config['push_notifications'] && $config['notification_permission']) ? '
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />' : '') . '
 
     <!-- Required for Android 11+ intent visibility -->
@@ -780,9 +826,9 @@ function generateAndroidProject($buildDir, $config) {
 
     <application
         android:allowBackup="true"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="' . $launcherIconResource . '"
         android:label="' . htmlspecialchars($config['app_name']) . '"
-        android:roundIcon="@mipmap/ic_launcher_round"
+        android:roundIcon="' . $launcherIconResource . '"
         android:supportsRtl="true"
         android:theme="@style/AppTheme"
         android:hardwareAccelerated="' . ($config['hardware_acceleration'] ? 'true' : 'false') . '"

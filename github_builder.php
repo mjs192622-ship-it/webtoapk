@@ -47,88 +47,123 @@ class GitHubAPKBuilder {
      * Generate GitHub Actions workflow file
      */
     private function generateWorkflow($buildId, $iconPath = null) {
-        $yaml = "name: Build APK\n\n";
-        $yaml .= "on:\n";
-        $yaml .= "  push:\n";
-        $yaml .= "    branches: [ main ]\n";
-        $yaml .= "  workflow_dispatch:\n\n";
-        $yaml .= "permissions:\n";
-        $yaml .= "  contents: write\n\n";
-        $yaml .= "jobs:\n";
-        $yaml .= "  build:\n";
-        $yaml .= "    runs-on: ubuntu-latest\n\n";
-        $yaml .= "    steps:\n";
-        $yaml .= "    - name: Checkout code\n";
-        $yaml .= "      uses: actions/checkout@v4\n\n";
+        return <<<'YAML'
+name: Build APK
 
-        // Embed user's custom icon so GitHub Actions can apply it
-        if ($iconPath && file_exists($iconPath) && filesize($iconPath) < 500000) {
-            $iconData = base64_encode(file_get_contents($iconPath));
-            $yaml .= "    - name: Apply custom app icon\n";
-            $yaml .= "      env:\n";
-            $yaml .= "        ICON_DATA: \"" . $iconData . "\"\n";
-            $yaml .= "      run: |\n";
-            $yaml .= "        echo \"\$ICON_DATA\" | base64 -d > /tmp/app_icon\n";
-            $yaml .= "        for entry in mdpi:48 hdpi:72 xhdpi:96 xxhdpi:144 xxxhdpi:192; do\n";
-            $yaml .= "          dir=\"\${entry%%:*}\"\n";
-            $yaml .= "          size=\"\${entry##*:}\"\n";
-            $yaml .= "          mkdir -p \"app/src/main/res/mipmap-\$dir\"\n";
-            $yaml .= "          convert -resize \${size}x\${size}! /tmp/app_icon \"app/src/main/res/mipmap-\$dir/ic_launcher.png\" 2>/dev/null || cp /tmp/app_icon \"app/src/main/res/mipmap-\$dir/ic_launcher.png\"\n";
-            $yaml .= "          cp \"app/src/main/res/mipmap-\$dir/ic_launcher.png\" \"app/src/main/res/mipmap-\$dir/ic_launcher_round.png\" 2>/dev/null || true\n";
-            $yaml .= "        done\n\n";
-        }
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
 
-        $yaml .= "    - name: Generate placeholder launcher icons if missing\n";
-        $yaml .= "      run: |\n";
-        $yaml .= "        for dir in app/src/main/res/mipmap-mdpi app/src/main/res/mipmap-hdpi app/src/main/res/mipmap-xhdpi app/src/main/res/mipmap-xxhdpi app/src/main/res/mipmap-xxxhdpi; do\n";
-        $yaml .= "          mkdir -p \$dir\n";
-        $yaml .= "          if [ ! -f \"\$dir/ic_launcher.png\" ]; then\n";
-        $yaml .= "            convert -size 192x192 xc:#6366f1 -fill white -font DejaVu-Sans -pointsize 80 -gravity center -annotate 0 'W' \"\$dir/ic_launcher.png\" 2>/dev/null || \\\n";
-        $yaml .= "            python3 -c \"import struct,zlib; data=struct.pack('>IHHI',1,192,192,0); open('\$dir/ic_launcher.png','wb').write(b'\\x89PNG\\r\\n\\x1a\\n'+struct.pack('>I',13)+b'IHDR'+struct.pack('>IIBBBBB',192,192,8,2,0,0,0)+struct.pack('>I',zlib.crc32(b'IHDR'+struct.pack('>IIBBBBB',192,192,8,2,0,0,0))&0xffffffff)+b'\\x00'*100)\"\n";
-        $yaml .= "            cp \"\$dir/ic_launcher.png\" \"\$dir/ic_launcher_round.png\" 2>/dev/null || true\n";
-        $yaml .= "          fi\n";
-        $yaml .= "        done\n\n";
-        $yaml .= "    - name: Set up JDK 17\n";
-        $yaml .= "      uses: actions/setup-java@v4\n";
-        $yaml .= "      with:\n";
-        $yaml .= "        java-version: '17'\n";
-        $yaml .= "        distribution: 'temurin'\n\n";
-        $yaml .= "    - name: Setup Android SDK\n";
-        $yaml .= "      uses: android-actions/setup-android@v3\n\n";
-        $yaml .= "    - name: Setup Gradle\n";
-        $yaml .= "      uses: gradle/actions/setup-gradle@v4\n";
-        $yaml .= "      with:\n";
-        $yaml .= "        gradle-version: '8.11.1'\n\n";
-        $yaml .= "    - name: Build Debug APK\n";
-        $yaml .= "      run: gradle assembleDebug --no-daemon\n\n";
-        $yaml .= "    - name: Build Release AAB (for Play Store)\n";
-        $yaml .= "      run: gradle bundleRelease --no-daemon\n";
-        $yaml .= "      continue-on-error: true\n\n";
-        $yaml .= "    - name: Upload Debug APK\n";
-        $yaml .= "      uses: actions/upload-artifact@v4\n";
-        $yaml .= "      with:\n";
-        $yaml .= "        name: debug-apk\n";
-        $yaml .= "        path: app/build/outputs/apk/debug/*.apk\n\n";
-        $yaml .= "    - name: Upload Release AAB\n";
-        $yaml .= "      uses: actions/upload-artifact@v4\n";
-        $yaml .= "      if: success()\n";
-        $yaml .= "      continue-on-error: true\n";
-        $yaml .= "      with:\n";
-        $yaml .= "        name: release-aab\n";
-        $yaml .= "        path: app/build/outputs/bundle/release/*.aab\n\n";
-        $yaml .= "    - name: Create Release\n";
-        $yaml .= "      uses: softprops/action-gh-release@v2\n";
-        $yaml .= "      if: success()\n";
-        $yaml .= "      with:\n";
-        $yaml .= "        tag_name: build-\${{ github.run_number }}\n";
-        $yaml .= "        name: Build #\${{ github.run_number }}\n";
-        $yaml .= "        files: |\n";
-        $yaml .= "          app/build/outputs/apk/debug/*.apk\n";
-        $yaml .= "          app/build/outputs/bundle/release/*.aab\n";
-        $yaml .= "      env:\n";
-        $yaml .= "        GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}\n";
-        
-        return $yaml;
+permissions:
+  contents: write
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.jvmargs="-Xmx3g -Dfile.encoding=UTF-8"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Verify Android project files
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f settings.gradle || { echo "settings.gradle missing"; exit 1; }
+          test -f build.gradle || { echo "project build.gradle missing"; exit 1; }
+          test -f app/build.gradle || { echo "app/build.gradle missing"; exit 1; }
+          test -f app/src/main/AndroidManifest.xml || { echo "AndroidManifest.xml missing"; exit 1; }
+          mkdir -p app/src/main/res/drawable
+          if ! ls app/src/main/res/drawable/app_icon.* >/dev/null 2>&1; then
+            cat > app/src/main/res/drawable/app_icon.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="108dp"
+              android:height="108dp"
+              android:viewportWidth="108"
+              android:viewportHeight="108">
+              <path android:fillColor="#4f46e5" android:pathData="M0,0h108v108h-108z"/>
+              <path android:fillColor="#ffffff" android:pathData="M24,24h60v60h-60z"/>
+              <path android:fillColor="#4f46e5" android:pathData="M32,32h44v44h-44z"/>
+              <path android:fillColor="#ffffff" android:pathData="M49,36h10v36h-10zM36,49h36v10h-36z"/>
+          </vector>
+          EOF
+          fi
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install required Android SDK packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.11.1'
+
+      - name: Build Debug APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          gradle :app:assembleDebug --stacktrace --no-daemon
+          mkdir -p dist
+          APK_PATH="$(find app/build/outputs/apk/debug -type f -name '*.apk' | head -n 1)"
+          test -n "$APK_PATH" || { echo "Debug APK was not produced"; exit 1; }
+          cp "$APK_PATH" "dist/${{ github.event.repository.name }}-debug.apk"
+
+      - name: Build Release AAB (optional)
+        shell: bash
+        continue-on-error: true
+        run: |
+          gradle :app:bundleRelease --stacktrace --no-daemon
+          mkdir -p dist
+          AAB_PATH="$(find app/build/outputs/bundle/release -type f -name '*.aab' | head -n 1 || true)"
+          if [ -n "$AAB_PATH" ]; then
+            cp "$AAB_PATH" "dist/${{ github.event.repository.name }}-release.aab"
+          fi
+
+      - name: Upload Debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-apk
+          path: dist/*-debug.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Release AAB
+        uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: release-aab
+          path: dist/*-release.aab
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: "Build #${{ github.run_number }}"
+          make_latest: true
+          files: dist/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+YAML;
     }
     
     /**
@@ -183,10 +218,8 @@ class GitHubAPKBuilder {
             // Skip unwanted files
             $ext = strtolower(pathinfo($relativePath, PATHINFO_EXTENSION));
             if (in_array($ext, ['apk', 'aab', 'zip', 'sqlite', 'sqlite-shm', 'sqlite-wal'])) continue;
-            if (@filesize($absolutePath) > 900000) continue; // skip files >900KB
-
-            // Skip mipmap PNGs — Actions workflow generates placeholder icons
-            if ($ext === 'png' && strpos($relativePath, 'mipmap-') !== false) continue;
+            // Keep generated resources such as custom app icons; only skip unusually large files.
+            if (@filesize($absolutePath) > 5 * 1024 * 1024) continue; // skip files >5MB
 
             $fileContent = file_get_contents($absolutePath);
             if ($fileContent === false) continue;

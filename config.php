@@ -5,7 +5,7 @@
  */
 
 // Groq API Configuration
-define('GROQ_API_KEY', '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');
+define('GROQ_API_KEY', getenv('GROQ_API_KEY') ?: '');
 define('GROQ_API_URL', 'https://api.groq.com/openai/v1/chat/completions');
 
 // Application Settings
@@ -42,8 +42,8 @@ define('GRADLE_HOME', '/opt/android-build/gradle/gradle-8.11.1');
  * Set GITHUB_TOKEN and GITHUB_OWNER in Render environment variables
  */
 define('ENABLE_GITHUB_BUILD', true);
-// Render env var overrides fallback; fallback split to avoid secret scanning
-define('GITHUB_TOKEN', getenv('GITHUB_TOKEN') ?: implode('', ['gh', 'p_vm', 'wW2xl', 'pkhgG', 'Ugqns', 'VcQf0', 'XPF4d', 'LA006', 'tOGM']));
+// Never hard-code a GitHub token in source. Set these in hosting environment variables.
+define('GITHUB_TOKEN', getenv('GITHUB_TOKEN') ?: '');
 define('GITHUB_OWNER', getenv('GITHUB_OWNER') ?: 'mjs192622-ship-it');
 
 // Create directories if they don't exist
@@ -64,6 +64,10 @@ ini_set('error_log', __DIR__ . '/error.log');
  * Call Groq API for AI-powered features
  */
 function callGroqAPI($prompt) {
+    if (empty(GROQ_API_KEY)) {
+        return null;
+    }
+
     $data = [
         'model' => 'llama-3.3-70b-versatile',
         'messages' => [

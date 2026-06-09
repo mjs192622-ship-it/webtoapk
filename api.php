@@ -293,6 +293,23 @@ function handleGithubStatus() {
         }
     }
     
+    // Persist final GitHub result so refresh/dashboard history does not lose the APK link.
+    if (!empty($apkDownloadUrl) || $workflowConclusion === 'failure') {
+        try {
+            require_once __DIR__ . '/db.php';
+            $db = getDB();
+            if (!empty($apkDownloadUrl)) {
+                $stmt = $db->prepare("UPDATE builds SET status = 'completed', download_url = ? WHERE build_id = ?");
+                $stmt->execute([$apkDownloadUrl, $buildId]);
+            } elseif ($workflowConclusion === 'failure') {
+                $stmt = $db->prepare("UPDATE builds SET status = 'failed' WHERE build_id = ?");
+                $stmt->execute([$buildId]);
+            }
+        } catch (Throwable $e) {
+            error_log('Could not persist GitHub build status: ' . $e->getMessage());
+        }
+    }
+
     echo json_encode([
         'success' => true,
         'build_id' => $buildId,
@@ -318,6 +335,7 @@ function githubApiRequest($url, $token) {
     curl_setopt_array($ch, [
         CURLOPT_URL => $url,
         CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 20,
         CURLOPT_HTTPHEADER => [
             'Authorization: Bearer ' . $token,
             'Accept: application/vnd.github.v3+json',
@@ -326,9 +344,15 @@ function githubApiRequest($url, $token) {
     ]);
     
     $response = curl_exec($ch);
+    if ($response === false) {
+        $error = curl_error($ch);
+        curl_close($ch);
+        return ['error' => $error ?: 'GitHub API request failed'];
+    }
     curl_close($ch);
     
-    return json_decode($response, true);
+    $decoded = json_decode($response, true);
+    return is_array($decoded) ? $decoded : ['error' => 'Invalid GitHub API response'];
 }
 
 /**
